@@ -1,124 +1,96 @@
-                    historico.sort(
-                        key=lambda x: x["timestamp"]
-                    )
+# ================================================================
+# IQ OPTION BOT V1.2
+# ================================================================
+#
+# MODO: SIMULADOR
+# ATIVO: definido pela variável PAR
+# TIMEFRAME: M1
+# ESTRATÉGIA: RSI 14 - 30/70
+#
+# FLUXO:
+#
+# VELA N FECHADA
+#       ↓
+# RSI 14
+#       ↓
+# CALL / PUT
+#       ↓
+# ABERTURA DA VELA N+1
+#       ↓
+# ENTRADA SIMULADA
+#       ↓
+# FECHAMENTO DA VELA N+1
+#       ↓
+# WIN / LOSS / EMPATE
+#       ↓
+# GOOGLE SHEETS + TELEGRAM
+#
+# ATENÇÃO:
+# ESTE BOT NÃO EXECUTA ORDENS REAIS.
+# ================================================================
 
-                    historico = historico[
-                        -HISTORICO_CANDLES:
-                    ]
+import os
+import time
+import json
+import logging
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
-                    # =================================================
-                    # TERCEIRO:
-                    # SALVA VELA + CALCULA RSI + GERA NOVO SINAL
-                    # =================================================
+import pandas as pd
+import requests
+import gspread
 
-                    processar_vela_fechada(
-                        vela_fechada,
-                        vela_entrada,
-                        historico,
-                        aba_coletas,
-                        aba_sinais,
-                        timestamps_coletas,
-                        sinais
-                    )
-
-                    # =================================================
-                    # QUARTO:
-                    # PLACAR
-                    # =================================================
-
-                    sinais = carregar_sinais(
-                        aba_sinais
-                    )
-
-                    resumo = atualizar_resumo(
-                        aba_resumo,
-                        sinais
-                    )
-
-                    log.info(
-                        "📈 PLACAR | "
-                        f"Sinais={resumo['total']} | "
-                        f"W={resumo['wins']} | "
-                        f"L={resumo['losses']} | "
-                        f"Emp={resumo['empates']} | "
-                        f"Assertividade="
-                        f"{resumo['assertividade']:.2f}% | "
-                        f"Saldo={resumo['saldo']:+d} | "
-                        f"Maior LOSS="
-                        f"{resumo['maior_loss']}"
-                    )
-
-                # ------------------------------------------------
-                # Atualiza última vela processada
-                # ------------------------------------------------
-
-                ultimo_timestamp_processado = (
-                    timestamp_atual
-                )
-
-            # ====================================================
-            # HEARTBEAT
-            # ====================================================
-
-            contador_heartbeat += 1
-
-            if contador_heartbeat >= 60:
-
-                contador_heartbeat = 0
-
-                sinais = carregar_sinais(
-                    aba_sinais
-                )
-
-                resumo = calcular_resumo(
-                    sinais
-                )
-
-                log.info(
-                    "💓 HEARTBEAT | "
-                    f"{PAR} M1 | "
-                    f"stream=OK | "
-                    f"última vela="
-                    f"{formatar_datetime(timestamp_atual)} | "
-                    f"RSI estratégia=30/70 | "
-                    f"W={resumo['wins']} "
-                    f"L={resumo['losses']}"
-                )
-
-            time.sleep(
-                LOOP_SECONDS
-            )
-
-        except KeyboardInterrupt:
-
-            log.info(
-                "Bot encerrado."
-            )
-
-            try:
-
-                api.stop_candles_stream(
-                    PAR,
-                    TIMEFRAME
-                )
-
-            except Exception:
-                pass
-
-            break
-
-        except Exception as e:
-
-            log.exception(
-                f"Erro no loop principal: {e}"
-            )
-
-            time.sleep(10)
+from google.oauth2.service_account import Credentials
+from iqoptionapi.stable_api import IQ_Option
 
 
 # ================================================================
-# EXECUÇÃO
+# CONFIGURAÇÕES
 # ================================================================
 
-if __name__ == "__main__":
-    main()
+PAR = os.getenv("PAR", "EURUSD").upper()
+
+TIMEFRAME = 60
+
+RSI_PERIODO = 14
+RSI_CALL = 30
+RSI_PUT = 70
+
+STREAM_MAXDICT = 20
+
+GOOGLE_SHEET_ID = os.getenv(
+    "GOOGLE_SHEET_ID",
+    "1uuw_jS5-e4dUQ28DCffknMaMnJfUbekHLkTFp0aqGtA"
+)
+
+ABA_COLETAS = "IQOption_Coletas"
+ABA_SINAIS = "Sinais_Bot"
+ABA_RESUMO = "Resumo"
+
+IQ_EMAIL = os.getenv("IQ_EMAIL")
+IQ_PASSWORD = os.getenv("IQ_PASSWORD")
+
+GOOGLE_CREDENTIALS_JSON = os.getenv(
+    "GOOGLE_CREDENTIALS_JSON"
+)
+
+TELEGRAM_BOT_TOKEN = os.getenv(
+    "TELEGRAM_BOT_TOKEN"
+)
+
+TELEGRAM_CHAT_ID = os.getenv(
+    "TELEGRAM_CHAT_ID"
+)
+
+TZ_LOCAL = ZoneInfo("America/Sao_Paulo")
+
+LOOP_SECONDS = 1
+
+HISTORICO_CANDLES = 100
+
+
+# ================================================================
+# LOG
+# ================================================================
+
+logging.basicConfig(
