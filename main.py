@@ -128,6 +128,15 @@ HEADER_RESUMO = [
 # UTILITÁRIOS
 # ================================================================
 
+def para_float(valor):
+    """Converte valores com vírgula ou ponto vindos da planilha para float sem erros."""
+    if valor is None or valor == "":
+        return 0.0
+    if isinstance(valor, (int, float)):
+        return float(valor)
+    return float(str(valor).replace(",", ".").strip())
+
+
 def agora_local():
     return datetime.now(TZ_LOCAL)
 
@@ -226,7 +235,7 @@ def garantir_cabecalho(aba, cabecalho):
     try:
         primeira_linha = aba.row_values(1)
         if not primeira_linha:
-            aba.update([cabecalho], "A1")
+            aba.update(range_name="A1", values=[cabecalho])
     except Exception as e:
         log.warning(
             f"Não foi possível verificar cabeçalho da aba {aba.title}: {e}"
@@ -516,8 +525,8 @@ def criar_sinal_simulado(aba, candle_fechado, candle_entrada, rsi, sinal, sinais
 # ================================================================
 
 def determinar_resultado(sinal, entrada, saida):
-    entrada = float(entrada)
-    saida = float(saida)
+    entrada = para_float(entrada)
+    saida = para_float(saida)
 
     if saida == entrada:
         return "EMPATE"
@@ -550,10 +559,9 @@ def atualizar_resultados(aba_sinais, sinais, candle_fechado):
 
             ts_entrada = int(dt_entrada.timestamp())
 
-            # Se o timestamp do candle fechado for igual ou superior ao de entrada, fecha o sinal
             if ts_fechado >= ts_entrada:
-                entrada = float(sinal["entrada"])
-                saida = float(candle_fechado["close"])
+                entrada = para_float(sinal["entrada"])
+                saida = para_float(candle_fechado["close"])
 
                 resultado = determinar_resultado(sinal["sinal"], entrada, saida)
                 linha = sinal["linha"]
@@ -562,8 +570,8 @@ def atualizar_resultados(aba_sinais, sinais, candle_fechado):
                     continue
 
                 aba_sinais.update(
-                    f"H{linha}:L{linha}",
-                    [[
+                    range_name=f"H{linha}:L{linha}",
+                    values=[[
                         candle_fechado["datetime"],
                         saida,
                         resultado,
@@ -660,7 +668,11 @@ def atualizar_resumo(aba_resumo, sinais):
     ]
 
     try:
-        aba_resumo.update("A1:I2", [HEADER_RESUMO, linha], value_input_option="USER_ENTERED")
+        aba_resumo.update(
+            range_name="A1:I2",
+            values=[HEADER_RESUMO, linha],
+            value_input_option="USER_ENTERED"
+        )
     except Exception as e:
         log.warning(f"Erro atualizando resumo: {e}")
 
@@ -784,7 +796,7 @@ def main():
     while True:
         try:
             if not api.check_connect():
-                log.warning("⚠️ IQ Option desconectada.")
+                log.warning("⚠️️ IQ Option desconectada.")
                 try:
                     api.connect()
                     api.change_balance("PRACTICE")
