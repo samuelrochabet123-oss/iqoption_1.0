@@ -1,38 +1,13 @@
 # ================================================================
-# IQ OPTION BOT V1.1
-# ================================================================
-#
-# MODO: SIMULADOR
-# ATIVO: definido pela variável PAR
-# TIMEFRAME: M1
-# ESTRATÉGIA: RSI 14 - 30/70
-#
-# FLUXO:
-#
-# VELA N FECHADA
-#       ↓
-# RSI 14
-#       ↓
-# CALL / PUT
-#       ↓
-# ABERTURA DA VELA N+1
-#       ↓
-# ENTRADA SIMULADA
-#       ↓
-# FECHAMENTO DA VELA N+1
-#       ↓
-# WIN / LOSS / EMPATE
-#       ↓
-# GOOGLE SHEETS + TELEGRAM
-#
-# ATENÇÃO:
-# ESTE BOT NÃO EXECUTA ORDENS REAIS.
+# IQ OPTION BOT V1.1 (COM SERVIDOR HTTP PARA RENDER WEB SERVICE)
 # ================================================================
 
 import os
 import time
 import json
 import logging
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -42,6 +17,29 @@ import gspread
 
 from google.oauth2.service_account import Credentials
 from iqoptionapi.stable_api import IQ_Option
+
+
+# ================================================================
+# SERVIDOR HTTP FICTÍCIO (PARA O RENDER WEB SERVICE)
+# ================================================================
+
+class DummyHTTPHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+        self.wfile.write(b"Bot IQ Option esta rodando!")
+
+    def log_message(self, format, *args):
+        # Silencia logs de requisições HTTP para não poluir o terminal do bot
+        return
+
+
+def iniciar_servidor_http():
+    porta = int(os.getenv("PORT", 8080))
+    servidor = HTTPServer(("0.0.0.0", porta), DummyHTTPHandler)
+    log.info(f"Servidor HTTP ativo na porta {porta} (Render Health Check OK).")
+    servidor.serve_forever()
 
 
 # ================================================================
@@ -759,6 +757,9 @@ def main():
     log.info(f"PAR: {PAR} | TIMEFRAME: M1 | ESTRATÉGIA: RSI 30/70")
     log.info("=" * 70)
 
+    # Dispara o servidor HTTP fictício em uma thread paralela (Health Check do Render)
+    threading.Thread(target=iniciar_servidor_http, daemon=True).start()
+
     validar_configuracao()
 
     spreadsheet = conectar_google()
@@ -796,7 +797,7 @@ def main():
     while True:
         try:
             if not api.check_connect():
-                log.warning("⚠️️ IQ Option desconectada.")
+                log.warning("⚠ IQ Option desconectada.")
                 try:
                     api.connect()
                     api.change_balance("PRACTICE")
