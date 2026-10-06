@@ -1,0 +1,6 @@
+gspread
+google-auth
+pandas
+requests
+websocket-client==0.56
+git+https://github.com/Lu-Yi-Hsun/iqoptionapi.git
