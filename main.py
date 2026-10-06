@@ -1,5 +1,5 @@
 # ================================================================
-# IQ OPTION BOT V1.0
+# IQ OPTION BOT V1.1
 # ================================================================
 #
 # MODO: SIMULADOR
@@ -9,22 +9,20 @@
 #
 # FLUXO:
 #
-# IQ OPTION
-#     ↓
-# STREAM DE CANDLES
-#     ↓
-# VELA FECHADA
-#     ↓
+# VELA N FECHADA
+#       ↓
 # RSI 14
-#     ↓
+#       ↓
 # CALL / PUT
-#     ↓
-# ENTRADA NA ABERTURA DA PRÓXIMA VELA
-#     ↓
-# FECHAMENTO DA PRÓXIMA VELA
-#     ↓
+#       ↓
+# ABERTURA DA VELA N+1
+#       ↓
+# ENTRADA SIMULADA
+#       ↓
+# FECHAMENTO DA VELA N+1
+#       ↓
 # WIN / LOSS / EMPATE
-#     ↓
+#       ↓
 # GOOGLE SHEETS + TELEGRAM
 #
 # ATENÇÃO:
@@ -84,14 +82,10 @@ TELEGRAM_CHAT_ID = os.getenv(
     "TELEGRAM_CHAT_ID"
 )
 
-# Horário oficial para exibição na planilha/Telegram.
-# O timestamp da IQ Option continua sendo usado internamente
-# para identificar as velas.
 TZ_LOCAL = ZoneInfo("America/Sao_Paulo")
 
 LOOP_SECONDS = 1
 
-# Quantidade de candles necessários para RSI.
 HISTORICO_CANDLES = 100
 
 
@@ -160,15 +154,7 @@ def formatar_datetime(timestamp):
     )
 
 
-def timestamp_da_vela(candle):
-    return int(candle["from"])
-
-
 def normalizar_candle(timestamp, candle):
-    """
-    Converte o formato retornado pelo stream para um formato
-    interno padronizado.
-    """
 
     return {
         "timestamp": int(timestamp),
@@ -182,7 +168,7 @@ def normalizar_candle(timestamp, candle):
 
 
 # ================================================================
-# VALIDAÇÃO DAS VARIÁVEIS
+# VALIDAÇÃO
 # ================================================================
 
 def validar_configuracao():
@@ -202,14 +188,12 @@ def validar_configuracao():
     ]
 
     if faltando:
-
         raise RuntimeError(
             "Variáveis de ambiente ausentes: "
             + ", ".join(faltando)
         )
 
     if not GOOGLE_SHEET_ID:
-
         raise RuntimeError(
             "GOOGLE_SHEET_ID não configurado."
         )
@@ -224,7 +208,6 @@ def conectar_google():
     log.info("Conectando ao Google Sheets...")
 
     try:
-
         info = json.loads(
             GOOGLE_CREDENTIALS_JSON
         )
@@ -292,19 +275,8 @@ def garantir_cabecalho(aba, cabecalho):
         if not primeira_linha:
 
             aba.update(
-                "A1",
-                [cabecalho]
-            )
-
-            return
-
-        # Não altera abas existentes com dados.
-        # As abas novas recebem o cabeçalho.
-        if len(primeira_linha) == 1 and not primeira_linha[0]:
-
-            aba.update(
-                "A1",
-                [cabecalho]
+                [cabecalho],
+                "A1"
             )
 
     except Exception as e:
@@ -322,8 +294,7 @@ def garantir_cabecalho(aba, cabecalho):
 def telegram_enviar(mensagem):
 
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-
-        return
+        return False
 
     url = (
         f"https://api.telegram.org/bot"
@@ -350,11 +321,17 @@ def telegram_enviar(mensagem):
                 f"{resposta.text}"
             )
 
+            return False
+
+        return True
+
     except Exception as e:
 
         log.warning(
             f"Erro enviando Telegram: {e}"
         )
+
+        return False
 
 
 # ================================================================
@@ -364,7 +341,6 @@ def telegram_enviar(mensagem):
 def calcular_rsi(closes, periodo=14):
 
     if len(closes) < periodo + 1:
-
         return None
 
     serie = pd.Series(
@@ -398,7 +374,6 @@ def calcular_rsi(closes, periodo=14):
     if ultima_perda == 0:
 
         if ultimo_ganho > 0:
-
             return 100.0
 
         return 50.0
@@ -419,15 +394,12 @@ def calcular_rsi(closes, periodo=14):
 def gerar_sinal(rsi):
 
     if rsi is None:
-
         return "NEUTRO"
 
     if rsi <= RSI_CALL:
-
         return "CALL"
 
     if rsi >= RSI_PUT:
-
         return "PUT"
 
     return "NEUTRO"
@@ -449,11 +421,8 @@ def conectar_iq():
     )
 
     try:
-
         api.set_max_reconnect(-1)
-
     except Exception:
-
         pass
 
     conectado, motivo = api.connect()
@@ -465,8 +434,7 @@ def conectar_iq():
         )
 
     # ============================================================
-    # GARANTIA DE SEGURANÇA:
-    # O BOT SEMPRE USA PRACTICE.
+    # SEGURANÇA
     # ============================================================
 
     api.change_balance(
@@ -515,7 +483,7 @@ def iniciar_stream(api):
 
 
 # ================================================================
-# STREAM -> LISTA ORDENADA
+# STREAM
 # ================================================================
 
 def obter_stream_candles(api):
@@ -526,7 +494,6 @@ def obter_stream_candles(api):
     )
 
     if not dados:
-
         return []
 
     candles = []
@@ -538,7 +505,6 @@ def obter_stream_candles(api):
             timestamp = int(timestamp)
 
             if "open" not in candle:
-
                 continue
 
             candles.append(
@@ -562,7 +528,7 @@ def obter_stream_candles(api):
 
 
 # ================================================================
-# HISTÓRICO INICIAL
+# HISTÓRICO
 # ================================================================
 
 def obter_historico_inicial(api):
@@ -589,7 +555,6 @@ def obter_historico_inicial(api):
         return []
 
     if not dados:
-
         return []
 
     candles = []
@@ -610,7 +575,6 @@ def obter_historico_inicial(api):
             )
 
         except Exception:
-
             continue
 
     candles.sort(
@@ -625,7 +589,7 @@ def obter_historico_inicial(api):
 
 
 # ================================================================
-# GOOGLE - CONTROLE DE CANDLES
+# GOOGLE - CANDLES
 # ================================================================
 
 def carregar_timestamps_coletas(aba):
@@ -647,13 +611,11 @@ def carregar_timestamps_coletas(aba):
     for valor in valores:
 
         if not valor:
-
             continue
 
         texto = valor.strip()
 
-        if texto == "datetime":
-
+        if texto.lower() == "datetime":
             continue
 
         try:
@@ -668,13 +630,10 @@ def carregar_timestamps_coletas(aba):
             )
 
             timestamps.add(
-                int(
-                    dt.timestamp()
-                )
+                int(dt.timestamp())
             )
 
         except Exception:
-
             continue
 
     return timestamps
@@ -688,13 +647,10 @@ def registrar_candle(aba, candle):
         candle["open"],
         candle["high"],
         candle["low"],
-        candle["close"],
-        candle["volume"],
-        "",
-        "",
-        "",
-        "",
-        ""
+        candle["close"]
+        if candle["close"] is not None
+        else "",
+        candle["volume"]
     ]
 
     try:
@@ -716,7 +672,7 @@ def registrar_candle(aba, candle):
 
 
 # ================================================================
-# SINAIS - CARREGAMENTO
+# SINAIS
 # ================================================================
 
 def carregar_sinais(aba):
@@ -736,7 +692,6 @@ def carregar_sinais(aba):
     sinais = {}
 
     if len(valores) <= 1:
-
         return sinais
 
     for numero_linha, row in enumerate(
@@ -745,7 +700,6 @@ def carregar_sinais(aba):
     ):
 
         if len(row) < 12:
-
             continue
 
         try:
@@ -769,14 +723,13 @@ def carregar_sinais(aba):
             }
 
         except Exception:
-
             continue
 
     return sinais
 
 
 # ================================================================
-# CRIAÇÃO DO SINAL
+# CRIAR SINAL
 # ================================================================
 
 def criar_sinal_simulado(
@@ -791,7 +744,6 @@ def criar_sinal_simulado(
     datetime_sinal = candle_fechado["datetime"]
 
     if datetime_sinal in sinais_existentes:
-
         return False
 
     linha = [
@@ -829,15 +781,18 @@ def criar_sinal_simulado(
         )
 
         log.info(
-            f"Sinal: {candle_fechado['datetime']}"
+            f"Vela do sinal: "
+            f"{candle_fechado['datetime']}"
         )
 
         log.info(
-            f"Entrada: {candle_entrada['datetime']}"
+            f"Entrada: "
+            f"{candle_entrada['datetime']}"
         )
 
         log.info(
-            f"Preço entrada: {candle_entrada['open']}"
+            f"Preço entrada: "
+            f"{candle_entrada['open']}"
         )
 
         log.info(
@@ -852,10 +807,11 @@ def criar_sinal_simulado(
             f"Sinal: {sinal}\n\n"
             f"Vela do sinal:\n"
             f"{candle_fechado['datetime']}\n\n"
-            f"Entrada:\n"
+            f"ENTRADA:\n"
             f"{candle_entrada['datetime']}\n"
             f"Preço: {candle_entrada['open']}\n\n"
-            "⏳ Aguardando fechamento..."
+            "⏳ Resultado será calculado "
+            "no fechamento da vela de entrada."
         )
 
         return True
@@ -883,13 +839,11 @@ def determinar_resultado(
     saida = float(saida)
 
     if saida == entrada:
-
         return "EMPATE"
 
     if sinal == "CALL":
 
         if saida > entrada:
-
             return "WIN"
 
         return "LOSS"
@@ -897,7 +851,6 @@ def determinar_resultado(
     if sinal == "PUT":
 
         if saida < entrada:
-
             return "WIN"
 
         return "LOSS"
@@ -906,67 +859,58 @@ def determinar_resultado(
 
 
 # ================================================================
-# ATUALIZA RESULTADO DE SINAIS ABERTOS
+# ATUALIZA RESULTADOS
 # ================================================================
 
 def atualizar_resultados(
     aba_sinais,
     sinais,
-    candles
+    candle_fechado
 ):
 
     if not sinais:
-
-        return
-
-    mapa = {
-        c["timestamp"]: c
-        for c in candles
-    }
+        return 0
 
     alterados = 0
+
+    ts_fechado = candle_fechado["timestamp"]
+
+    # ------------------------------------------------------------
+    # O candle_fechado é justamente o candle que acabou de
+    # terminar.
+    #
+    # Procuramos sinais cuja vela de entrada seja exatamente
+    # esse candle.
+    # ------------------------------------------------------------
 
     for dt_sinal, sinal in list(
         sinais.items()
     ):
 
         if sinal["status"] != "ABERTO":
-
             continue
 
         try:
 
-            # O sinal foi gerado pela vela N.
-            #
-            # A entrada é na abertura da vela N+1.
-            # O resultado é no fechamento da vela N+1.
-            #
-            # Portanto precisamos encontrar a vela cujo
-            # timestamp seja exatamente +60 segundos.
-
-            dt_sinal_obj = datetime.strptime(
-                sinal["datetime_sinal"],
+            dt_entrada = datetime.strptime(
+                sinal["datetime_entrada"],
                 "%Y-%m-%d %H:%M:%S"
             )
 
-            dt_sinal_obj = dt_sinal_obj.replace(
+            dt_entrada = dt_entrada.replace(
                 tzinfo=TZ_LOCAL
             )
 
-            ts_sinal = int(
-                dt_sinal_obj.timestamp()
+            ts_entrada = int(
+                dt_entrada.timestamp()
             )
 
-            ts_resultado = (
-                ts_sinal + TIMEFRAME
-            )
+            # ----------------------------------------------------
+            # Só fecha este sinal se a vela que acabou de fechar
+            # for exatamente a vela da entrada.
+            # ----------------------------------------------------
 
-            candle_resultado = mapa.get(
-                ts_resultado
-            )
-
-            if candle_resultado is None:
-
+            if ts_entrada != ts_fechado:
                 continue
 
             entrada = float(
@@ -974,7 +918,7 @@ def atualizar_resultados(
             )
 
             saida = float(
-                candle_resultado["close"]
+                candle_fechado["close"]
             )
 
             resultado = determinar_resultado(
@@ -983,38 +927,33 @@ def atualizar_resultados(
                 saida
             )
 
-            # ----------------------------------------------------
-            # Atualiza a linha
-            # ----------------------------------------------------
-
             linha = sinal["linha"]
 
-            aba_sinais.update_cell(
-                linha,
-                8,
-                candle_resultado["datetime"]
+            if not linha:
+                continue
+
+            # ----------------------------------------------------
+            # Atualiza Google Sheets
+            # ----------------------------------------------------
+
+            aba_sinais.update(
+                f"H{linha}:L{linha}",
+                [[
+                    candle_fechado["datetime"],
+                    saida,
+                    resultado,
+                    "",
+                    "FECHADO"
+                ]],
+                value_input_option="USER_ENTERED"
             )
 
-            aba_sinais.update_cell(
-                linha,
-                9,
-                saida
-            )
-
-            aba_sinais.update_cell(
-                linha,
-                10,
-                resultado
-            )
-
-            aba_sinais.update_cell(
-                linha,
-                12,
-                "FECHADO"
-            )
+            # ----------------------------------------------------
+            # Atualiza memória
+            # ----------------------------------------------------
 
             sinal["datetime_resultado"] = (
-                candle_resultado["datetime"]
+                candle_fechado["datetime"]
             )
 
             sinal["saida"] = saida
@@ -1032,12 +971,36 @@ def atualizar_resultados(
             }[resultado]
 
             log.info(
-                f"{emoji} RESULTADO | "
-                f"{sinal['sinal']} | "
-                f"{resultado} | "
-                f"Entrada={entrada} | "
-                f"Saída={saida}"
+                "=================================================="
             )
+
+            log.info(
+                f"{emoji} RESULTADO CONFIRMADO"
+            )
+
+            log.info(
+                f"Sinal: {sinal['sinal']}"
+            )
+
+            log.info(
+                f"Entrada: {entrada}"
+            )
+
+            log.info(
+                f"Saída: {saida}"
+            )
+
+            log.info(
+                f"Resultado: {resultado}"
+            )
+
+            log.info(
+                "=================================================="
+            )
+
+            # ----------------------------------------------------
+            # TELEGRAM
+            # ----------------------------------------------------
 
             telegram_enviar(
                 f"{emoji} RESULTADO — SIMULADOR\n\n"
@@ -1047,13 +1010,15 @@ def atualizar_resultados(
                 f"Sinal: {sinal['sinal']}\n\n"
                 f"Entrada: {entrada}\n"
                 f"Saída: {saida}\n"
-                f"Resultado: {resultado}"
+                f"Resultado: {resultado}\n\n"
+                f"Fechamento: "
+                f"{candle_fechado['datetime']}"
             )
 
         except Exception as e:
 
-            log.warning(
-                f"Erro atualizando sinal "
+            log.exception(
+                f"Erro fechando sinal "
                 f"{dt_sinal}: {e}"
             )
 
@@ -1073,7 +1038,6 @@ def calcular_resumo(sinais):
     atual_loss = 0
     maior_loss = 0
 
-    # Ordena pelo horário do sinal
     ordenados = sorted(
         sinais.values(),
         key=lambda x: x["datetime_sinal"]
@@ -1162,9 +1126,6 @@ def atualizar_resumo(
 
     try:
 
-        # A V1 possui apenas uma estratégia.
-        # Atualizamos A2:I2 sem apagar a planilha.
-
         aba_resumo.update(
             "A1:I2",
             [
@@ -1184,13 +1145,13 @@ def atualizar_resumo(
 
 
 # ================================================================
-# STATUS TELEGRAM
+# TELEGRAM STATUS
 # ================================================================
 
 def telegram_online():
 
     telegram_enviar(
-        "🤖 IQ OPTION BOT V1\n\n"
+        "🤖 IQ OPTION BOT V1.1\n\n"
         "🟢 ONLINE\n\n"
         f"Par: {PAR}\n"
         "Timeframe: M1\n"
@@ -1204,7 +1165,7 @@ def telegram_online():
 def telegram_reconectado():
 
     telegram_enviar(
-        "🔄 IQ OPTION BOT V1\n\n"
+        "🔄 IQ OPTION BOT V1.1\n\n"
         "Conexão restabelecida.\n\n"
         f"Par: {PAR}\n"
         "Modo: SIMULADOR"
@@ -1212,7 +1173,7 @@ def telegram_reconectado():
 
 
 # ================================================================
-# PROCESSAMENTO DE VELAS FECHADAS
+# PROCESSAMENTO DA VELA FECHADA
 # ================================================================
 
 def processar_vela_fechada(
@@ -1228,7 +1189,7 @@ def processar_vela_fechada(
     ts = vela_fechada["timestamp"]
 
     # ------------------------------------------------------------
-    # 1. SALVA A VELA NA PLANILHA
+    # 1. SALVA CANDLE
     # ------------------------------------------------------------
 
     if ts not in timestamps_coletas:
@@ -1252,9 +1213,7 @@ def processar_vela_fechada(
             )
 
     # ------------------------------------------------------------
-    # 2. CALCULA RSI
-    #
-    # O RSI usa somente candles FECHADOS.
+    # 2. RSI
     # ------------------------------------------------------------
 
     closes = [
@@ -1288,7 +1247,7 @@ def processar_vela_fechada(
     )
 
     # ------------------------------------------------------------
-    # 3. SÓ CRIA SINAL SE CALL OU PUT
+    # 3. NÃO HÁ SINAL
     # ------------------------------------------------------------
 
     if sinal not in (
@@ -1299,16 +1258,21 @@ def processar_vela_fechada(
         return
 
     # ------------------------------------------------------------
-    # 4. PRÓXIMA VELA É A ENTRADA
+    # 4. PRECISAMOS DA PRÓXIMA VELA
     # ------------------------------------------------------------
 
     if vela_entrada is None:
 
         log.warning(
-            "Não existe vela de entrada ainda."
+            "Sinal detectado, mas ainda não existe "
+            "vela de entrada."
         )
 
         return
+
+    # ------------------------------------------------------------
+    # 5. CRIA SINAL
+    # ------------------------------------------------------------
 
     criado = criar_sinal_simulado(
         aba_sinais,
@@ -1321,29 +1285,17 @@ def processar_vela_fechada(
 
     if criado:
 
-        sinais[
-            vela_fechada["datetime"]
-        ] = {
-            "linha": None,
-            "datetime_sinal":
-                vela_fechada["datetime"],
-            "par": PAR,
-            "estrategia": "RSI 30/70",
-            "rsi": round(rsi, 2),
-            "sinal": sinal,
-            "datetime_entrada":
-                vela_entrada["datetime"],
-            "entrada":
-                vela_entrada["open"],
-            "datetime_resultado": "",
-            "saida": "",
-            "resultado": "AGUARDANDO",
-            "saldo_wl": "",
-            "status": "ABERTO"
-        }
+        # Recarrega imediatamente para obter a linha correta
+        # criada pelo Google Sheets.
+        sinais_atualizados = carregar_sinais(
+            aba_sinais
+        )
 
-        # Depois da inclusão, recarregaremos a planilha
-        # periodicamente para obter o número real da linha.
+        sinais.clear()
+
+        sinais.update(
+            sinais_atualizados
+        )
 
 
 # ================================================================
@@ -1354,7 +1306,7 @@ def main():
 
     log.info("")
     log.info("=" * 70)
-    log.info("IQ OPTION BOT V1.0")
+    log.info("IQ OPTION BOT V1.1")
     log.info("=" * 70)
     log.info(f"PAR: {PAR}")
     log.info("TIMEFRAME: M1")
@@ -1364,9 +1316,9 @@ def main():
 
     validar_configuracao()
 
-    # ------------------------------------------------------------
+    # ============================================================
     # GOOGLE
-    # ------------------------------------------------------------
+    # ============================================================
 
     spreadsheet = conectar_google()
 
@@ -1415,15 +1367,15 @@ def main():
         f"{len(sinais)}"
     )
 
-    # ------------------------------------------------------------
+    # ============================================================
     # IQ OPTION
-    # ------------------------------------------------------------
+    # ============================================================
 
     api = conectar_iq()
 
-    # ------------------------------------------------------------
-    # HISTÓRICO PARA RSI
-    # ------------------------------------------------------------
+    # ============================================================
+    # HISTÓRICO
+    # ============================================================
 
     historico = obter_historico_inicial(
         api
@@ -1435,9 +1387,9 @@ def main():
             "Histórico insuficiente para iniciar o RSI."
         )
 
-    # ------------------------------------------------------------
+    # ============================================================
     # STREAM
-    # ------------------------------------------------------------
+    # ============================================================
 
     iniciar_stream(
         api
@@ -1445,13 +1397,12 @@ def main():
 
     telegram_online()
 
-    # ------------------------------------------------------------
-    # CONTROLE DA ÚLTIMA VELA
-    # ------------------------------------------------------------
+    # ============================================================
+    # SNAPSHOT INICIAL
+    # ============================================================
 
     ultimo_timestamp_processado = None
 
-    # Primeiro snapshot do stream.
     snapshot = obter_stream_candles(
         api
     )
@@ -1467,9 +1418,9 @@ def main():
             f"{snapshot[-1]['datetime']}"
         )
 
-    # ------------------------------------------------------------
+    # ============================================================
     # LOOP
-    # ------------------------------------------------------------
+    # ============================================================
 
     contador_heartbeat = 0
 
@@ -1527,22 +1478,11 @@ def main():
 
                 continue
 
-            # ----------------------------------------------------
-            # Descobre a vela atualmente em formação.
-            #
-            # Se o stream já possui uma vela com timestamp maior
-            # que a última processada, então a última processada
-            # fechou.
-            # ----------------------------------------------------
-
             timestamp_atual = (
                 candles_stream[-1]["timestamp"]
             )
 
-            if (
-                ultimo_timestamp_processado
-                is None
-            ):
+            if ultimo_timestamp_processado is None:
 
                 ultimo_timestamp_processado = (
                     timestamp_atual
@@ -1555,26 +1495,19 @@ def main():
                 continue
 
             # ====================================================
-            # NOVA VELA DETECTADA
+            # NOVA VELA
             # ====================================================
 
             if timestamp_atual > ultimo_timestamp_processado:
-
-                # Procuramos a vela que acabou de fechar.
-                #
-                # Exemplo:
-                #
-                # última processada = 14:30
-                # nova atual          = 14:31
-                #
-                # 14:30 acabou de fechar.
-                # 14:31 é a vela de entrada.
-                #
 
                 mapa = {
                     c["timestamp"]: c
                     for c in candles_stream
                 }
+
+                # ------------------------------------------------
+                # A vela que acabou de fechar.
+                # ------------------------------------------------
 
                 ts_fechada = (
                     timestamp_atual -
@@ -1585,15 +1518,61 @@ def main():
                     ts_fechada
                 )
 
+                # ------------------------------------------------
+                # A vela atualmente em formação.
+                # Ela será a vela de entrada para um sinal
+                # gerado pela vela fechada.
+                # ------------------------------------------------
+
                 vela_entrada = mapa.get(
                     timestamp_atual
                 )
 
                 if vela_fechada:
 
-                    # --------------------------------------------
-                    # Adiciona ao histórico local
-                    # --------------------------------------------
+                    # =================================================
+                    # PRIMEIRO:
+                    # FECHA SINAIS QUE TINHAM ESSA VELA COMO ENTRADA
+                    # =================================================
+
+                    sinais = carregar_sinais(
+                        aba_sinais
+                    )
+
+                    resultados = atualizar_resultados(
+                        aba_sinais,
+                        sinais,
+                        vela_fechada
+                    )
+
+                    if resultados > 0:
+
+                        sinais = carregar_sinais(
+                            aba_sinais
+                        )
+
+                        resumo = atualizar_resumo(
+                            aba_resumo,
+                            sinais
+                        )
+
+                        log.info(
+                            "📈 PLACAR | "
+                            f"Sinais={resumo['total']} | "
+                            f"W={resumo['wins']} | "
+                            f"L={resumo['losses']} | "
+                            f"Emp={resumo['empates']} | "
+                            f"Assertividade="
+                            f"{resumo['assertividade']:.2f}% | "
+                            f"Saldo={resumo['saldo']:+d} | "
+                            f"Maior LOSS="
+                            f"{resumo['maior_loss']}"
+                        )
+
+                    # =================================================
+                    # SEGUNDO:
+                    # ADICIONA A VELA AO HISTÓRICO
+                    # =================================================
 
                     historico = [
                         c
@@ -1610,14 +1589,14 @@ def main():
                         key=lambda x: x["timestamp"]
                     )
 
-                    # Mantém somente o necessário
                     historico = historico[
                         -HISTORICO_CANDLES:
                     ]
 
-                    # --------------------------------------------
-                    # PROCESSA
-                    # --------------------------------------------
+                    # =================================================
+                    # TERCEIRO:
+                    # SALVA VELA + CALCULA RSI + GERA NOVO SINAL
+                    # =================================================
 
                     processar_vela_fechada(
                         vela_fechada,
@@ -1629,53 +1608,39 @@ def main():
                         sinais
                     )
 
+                    # =================================================
+                    # QUARTO:
+                    # PLACAR
+                    # =================================================
+
+                    sinais = carregar_sinais(
+                        aba_sinais
+                    )
+
+                    resumo = atualizar_resumo(
+                        aba_resumo,
+                        sinais
+                    )
+
+                    log.info(
+                        "📈 PLACAR | "
+                        f"Sinais={resumo['total']} | "
+                        f"W={resumo['wins']} | "
+                        f"L={resumo['losses']} | "
+                        f"Emp={resumo['empates']} | "
+                        f"Assertividade="
+                        f"{resumo['assertividade']:.2f}% | "
+                        f"Saldo={resumo['saldo']:+d} | "
+                        f"Maior LOSS="
+                        f"{resumo['maior_loss']}"
+                    )
+
                 # ------------------------------------------------
-                # A nova vela passa a ser a última processada.
+                # Atualiza última vela processada
                 # ------------------------------------------------
 
                 ultimo_timestamp_processado = (
                     timestamp_atual
-                )
-
-                # ------------------------------------------------
-                # Atualiza resultados dos sinais.
-                #
-                # Neste ponto, uma vela nova começou.
-                # Portanto a vela anterior fechou.
-                # ------------------------------------------------
-
-                # Recarregamos os sinais para garantir que
-                # temos os números corretos das linhas.
-                sinais = carregar_sinais(
-                    aba_sinais
-                )
-
-                atualizar_resultados(
-                    aba_sinais,
-                    sinais,
-                    candles_stream
-                )
-
-                sinais = carregar_sinais(
-                    aba_sinais
-                )
-
-                resumo = atualizar_resumo(
-                    aba_resumo,
-                    sinais
-                )
-
-                log.info(
-                    "📈 PLACAR | "
-                    f"Sinais={resumo['total']} | "
-                    f"W={resumo['wins']} | "
-                    f"L={resumo['losses']} | "
-                    f"Emp={resumo['empates']} | "
-                    f"Assertividade="
-                    f"{resumo['assertividade']:.2f}% | "
-                    f"Saldo={resumo['saldo']:+d} | "
-                    f"Maior LOSS="
-                    f"{resumo['maior_loss']}"
                 )
 
             # ====================================================
@@ -1687,6 +1652,10 @@ def main():
             if contador_heartbeat >= 60:
 
                 contador_heartbeat = 0
+
+                sinais = carregar_sinais(
+                    aba_sinais
+                )
 
                 resumo = calcular_resumo(
                     sinais
@@ -1721,7 +1690,6 @@ def main():
                 )
 
             except Exception:
-
                 pass
 
             break
@@ -1740,5 +1708,4 @@ def main():
 # ================================================================
 
 if __name__ == "__main__":
-
     main()
