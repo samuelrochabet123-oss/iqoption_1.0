@@ -1,5 +1,5 @@
 # ================================================================
-# IQ OPTION BOT V1.2 (RSI + S/R + BANDAS DE BOLLINGER + COOLDOWN)
+# IQ OPTION BOT V1.2 (PRICE ACTION + EXAUSTÃO + S/R + COOLDOWN)
 # COM SERVIDOR HTTP PARA RENDER WEB SERVICE
 # ================================================================
 
@@ -49,19 +49,14 @@ def iniciar_servidor_http():
 
 PAR = os.getenv("PAR", "EURUSD").upper()
 
-TIMEFRAME = 60
+TIMEFRAME = 60  # M1
 
-# Configurações RSI
-RSI_PERIODO = 14
-RSI_CALL = 30
-RSI_PUT = 70
-
-# Configurações Bandas de Bollinger
-BOLLINGER_PERIODO = 20
-BOLLINGER_STD = 2.0
-
-# Configurações Suporte e Resistência
+# Configurações de Suporte e Resistência
 SR_PERIODO = 20
+
+# Configurações de Price Action & Exaustão
+EXAUSTAO_FATOR_TAMANHO = 1.5  # Quantas vezes a vela precisa ser maior que a média recente
+MIN_PAVIO_RATIO = 0.35        # Pavio de rejeição mínimo (35% do tamanho total da vela)
 
 # Configuração de Cooldown (Mínimo de velas entre sinais)
 COOLDOWN_VELAS = 3
@@ -111,7 +106,7 @@ HEADER_SINAIS = [
     "datetime_sinal",
     "par",
     "estrategia",
-    "rsi",
+    "pavio_ratio",
     "sinal",
     "datetime_entrada",
     "entrada",
@@ -279,49 +274,8 @@ def telegram_enviar(mensagem):
 
 
 # ================================================================
-# CÁLCULO DE INDICADORES
+# CÁLCULO DE INDICADORES / ESTRUTURA
 # ================================================================
-
-def calcular_rsi(closes, periodo=14):
-    if len(closes) < periodo + 1:
-        return None
-
-    serie = pd.Series(closes, dtype="float64")
-    delta = serie.diff()
-
-    ganhos = delta.clip(lower=0)
-    perdas = -delta.clip(upper=0)
-
-    media_ganho = ganhos.ewm(alpha=1 / periodo, adjust=False).mean()
-    media_perda = perdas.ewm(alpha=1 / periodo, adjust=False).mean()
-
-    ultimo_ganho = media_ganho.iloc[-1]
-    ultima_perda = media_perda.iloc[-1]
-
-    if ultima_perda == 0:
-        if ultimo_ganho > 0:
-            return 100.0
-        return 50.0
-
-    rs = ultimo_ganho / ultima_perda
-    rsi = 100 - (100 / (1 + rs))
-
-    return float(rsi)
-
-
-def calcular_bandas_bollinger(closes, periodo=20, std_dev=2.0):
-    if len(closes) < periodo:
-        return None, None, None
-
-    serie = pd.Series(closes, dtype="float64")
-    sma = serie.rolling(window=periodo).mean().iloc[-1]
-    std = serie.rolling(window=periodo).std().iloc[-1]
-
-    banda_superior = sma + (std * std_dev)
-    banda_inferior = sma - (std * std_dev)
-
-    return float(banda_superior), float(sma), float(banda_inferior)
-
 
 def calcular_suporte_resistencia(historico, periodo=20):
     if len(historico) < periodo:
@@ -335,48 +289,62 @@ def calcular_suporte_resistencia(historico, periodo=20):
 
 
 # ================================================================
-# ESTRATÉGIA COMBINADA: RSI + S/R + BOLLINGER + COOLDOWN
+# ESTRATÉGIA: PRICE ACTION + EXAUSTÃO + S/R + COOLDOWN
 # ================================================================
 
 def gerar_sinal_estrategia(historico, timestamp_atual):
     global ultimo_sinal_timestamp
 
-    if len(historico) < max(BOLLINGER_PERIODO, SR_PERIODO, RSI_PERIODO + 1):
+    if len(historico) < SR_PERIODO + 10:
         return "NEUTRO", None
 
-    # Verificação do Cooldown
+    # Verificação de Cooldown
     if (timestamp_atual - ultimo_sinal_timestamp) < (COOLDOWN_VELAS * TIMEFRAME):
         return "NEUTRO", None
 
-    closes = [c["close"] for c in historico]
-    rsi = calcular_rsi(closes, RSI_PERIODO)
-    b_sup, b_mid, b_inf = calcular_bandas_bollinger(closes, BOLLINGER_PERIODO, BOLLINGER_STD)
     suporte, resistencia = calcular_suporte_resistencia(historico[:-1], SR_PERIODO)
+    if suporte is None or resistencia is None:
+        return "NEUTRO", None
 
-    if None in (rsi, b_sup, b_inf, suporte, resistencia):
-        return "NEUTRO", rsi
+    vela_atual = historico[-1]
+    velas_anteriores = historico[-11:-1]  # Média dos últimos 10 candles
 
-    ultimo_close = closes[-1]
-    ultimo_low = historico[-1]["low"]
-    ultimo_high = historico[-1]["high"]
+    abertura = vela_atual["open"]
+    fechamento = vela_atual["close"]
+    maxima = vela_atual["high"]
+    minima = vela_atual["low"]
 
-    # CONDIÇÃO DE COMPRA (CALL)
-    # 1. RSI em zona de sobrevenda (<= 30)
-    # 2. Fechamento abaixo ou tocando a Banda Inferior de Bollinger
-    # 3. Mínima tocando ou rompendo a zona de Suporte
-    if rsi <= RSI_CALL and ultimo_close <= b_inf and ultimo_low <= suporte:
+    tamanho_total = maxima - minima
+    if tamanho_total == 0:
+        return "NEUTRO", None
+
+    # Tamanho médio dos candles anteriores
+    tamanhos_anteriores = [c["high"] - c["low"] for c in velas_anteriores]
+    media_tamanho = sum(tamanhos_anteriores) / len(tamanhos_anteriores) if tamanhos_anteriores else 0.0001
+
+    # Identificação de Exaustão (Vela muito maior que o padrão)
+    eh_exaustao = tamanho_total >= (media_tamanho * EXAUSTAO_FATOR_TAMANHO)
+
+    # Cálculo dos pavios
+    pavio_superior = maxima - max(abertura, fechamento)
+    pavio_inferior = min(abertura, fechamento) - minima
+
+    ratio_pavio_sup = pavio_superior / tamanho_total
+    ratio_pavio_inf = pavio_inferior / tamanho_total
+
+    # 1. EXAUSTÃO DE COMPRA -> RETRAÇÃO/REVERSÃO PARA PUT
+    # Vela autista esticada, rompendo/tocando resistência, com forte pavio superior (rejeição)
+    if eh_exaustao and maxima >= resistencia and fechamento > abertura and ratio_pavio_sup >= MIN_PAVIO_RATIO:
         ultimo_sinal_timestamp = timestamp_atual
-        return "CALL", rsi
+        return "PUT", round(ratio_pavio_sup * 100, 2)
 
-    # CONDIÇÃO DE VENDA (PUT)
-    # 1. RSI em zona de sobrecompra (>= 70)
-    # 2. Fechamento acima ou tocando a Banda Superior de Bollinger
-    # 3. Máxima tocando ou rompendo a zona de Resistência
-    if rsi >= RSI_PUT and ultimo_close >= b_sup and ultimo_high >= resistencia:
+    # 2. EXAUSTÃO DE VENDA -> RETRAÇÃO/REVERSÃO PARA CALL
+    # Vela baixista esticada, rompendo/tocando suporte, com forte pavio inferior (rejeição)
+    if eh_exaustao and minima <= suporte and fechamento < abertura and ratio_pavio_inf >= MIN_PAVIO_RATIO:
         ultimo_sinal_timestamp = timestamp_atual
-        return "PUT", rsi
+        return "CALL", round(ratio_pavio_inf * 100, 2)
 
-    return "NEUTRO", rsi
+    return "NEUTRO", round(max(ratio_pavio_sup, ratio_pavio_inf) * 100, 2)
 
 
 # ================================================================
@@ -527,7 +495,7 @@ def carregar_sinais(aba):
                 "datetime_sinal": dt_sinal,
                 "par": row[1],
                 "estrategia": row[2],
-                "rsi": row[3],
+                "pavio_ratio": row[3],
                 "sinal": row[4],
                 "datetime_entrada": row[5],
                 "entrada": row[6],
@@ -543,7 +511,7 @@ def carregar_sinais(aba):
     return sinais
 
 
-def criar_sinal_simulado(aba, candle_fechado, candle_entrada, rsi, sinal, sinais_existentes):
+def criar_sinal_simulado(aba, candle_fechado, candle_entrada, pavio_ratio, sinal, sinais_existentes):
     datetime_sinal = candle_fechado["datetime"]
     if datetime_sinal in sinais_existentes:
         return False
@@ -551,8 +519,8 @@ def criar_sinal_simulado(aba, candle_fechado, candle_entrada, rsi, sinal, sinais
     linha = [
         candle_fechado["datetime"],
         PAR,
-        "RSI+S/R+Bollinger+Cooldown",
-        round(rsi, 2) if rsi is not None else "",
+        "Price Action + Exaustao",
+        f"{pavio_ratio}%" if pavio_ratio is not None else "",
         sinal,
         candle_entrada["datetime"],
         candle_entrada["open"],
@@ -566,15 +534,15 @@ def criar_sinal_simulado(aba, candle_fechado, candle_entrada, rsi, sinal, sinais
     try:
         aba.append_row(linha, value_input_option="USER_ENTERED")
         log.info("=" * 50)
-        log.info(f"🚨 NOVO SINAL | {sinal} | RSI: {rsi:.2f if rsi else 'N/A'}")
+        log.info(f"🚨 NOVO SINAL | {sinal} | Pavio Rejeição: {pavio_ratio}%")
         log.info(f"Vela Sinal: {candle_fechado['datetime']} | Entrada: {candle_entrada['datetime']}")
         log.info("=" * 50)
 
         telegram_enviar(
             "🚨 NOVO SINAL — SIMULADOR\n\n"
             f"Par: {PAR}\n"
-            f"Estratégia: RSI + S/R + Bollinger + Cooldown\n"
-            f"RSI: {rsi:.2f if rsi else 'N/A'}\n"
+            f"Estratégia: Price Action + Exaustão\n"
+            f"Rejeição Pavio: {pavio_ratio}%\n"
             f"Sinal: {sinal}\n\n"
             f"Vela do sinal:\n{candle_fechado['datetime']}\n\n"
             f"ENTRADA:\n{candle_entrada['datetime']}\n"
@@ -663,8 +631,8 @@ def atualizar_resultados(aba_sinais, sinais, candle_fechado):
                 telegram_enviar(
                     f"{emoji} RESULTADO — SIMULADOR\n\n"
                     f"Par: {PAR}\n"
-                    f"Estratégia: RSI + S/R + Bollinger + Cooldown\n"
-                    f"RSI: {sinal['rsi']}\n"
+                    f"Estratégia: Price Action + Exaustão\n"
+                    f"Rejeição Pavio: {sinal.get('pavio_ratio', 'N/A')}\n"
                     f"Sinal: {sinal['sinal']}\n\n"
                     f"Entrada: {entrada}\n"
                     f"Saída: {saida}\n"
@@ -723,7 +691,7 @@ def calcular_resumo(sinais):
 def atualizar_resumo(aba_resumo, sinais):
     resumo = calcular_resumo(sinais)
     linha = [
-        "RSI+S/R+Bollinger+Cooldown",
+        "Price Action + Exaustao",
         resumo["total"],
         resumo["wins"],
         resumo["losses"],
@@ -752,7 +720,7 @@ def telegram_online():
         "🟢 ONLINE\n\n"
         f"Par: {PAR}\n"
         "Timeframe: M1\n"
-        "Estratégia: RSI + S/R + Bollinger + Cooldown\n"
+        "Estratégia: Price Action + Exaustão\n"
         "Modo: SIMULADOR\n\n"
         "⚠️ Nenhuma ordem real será executada."
     )
@@ -788,8 +756,8 @@ def processar_vela_fechada(
             timestamps_coletas.add(ts)
             log.info(f"📊 CANDLE | {vela_fechada['datetime']} | O={vela_fechada['open']} | C={vela_fechada['close']}")
 
-    sinal, rsi = gerar_sinal_estrategia(historico, ts)
-    log.info(f"🔎 ANÁLISE | {vela_fechada['datetime']} | RSI={rsi:.2f if rsi else 'N/A'} | Sinal={sinal}")
+    sinal, pavio_ratio = gerar_sinal_estrategia(historico, ts)
+    log.info(f"🔎 ANÁLISE | {vela_fechada['datetime']} | Pavio={pavio_ratio}% | Sinal={sinal}")
 
     if sinal not in ("CALL", "PUT"):
         return
@@ -798,7 +766,7 @@ def processar_vela_fechada(
         log.warning("Sinal detectado, mas ainda não existe vela de entrada.")
         return
 
-    criado = criar_sinal_simulado(aba_sinais, vela_fechada, vela_entrada, rsi, sinal, sinais)
+    criado = criar_sinal_simulado(aba_sinais, vela_fechada, vela_entrada, pavio_ratio, sinal, sinais)
 
     if criado:
         sinais_atualizados = carregar_sinais(aba_sinais)
@@ -815,7 +783,7 @@ def main():
     log.info("=" * 70)
     log.info("IQ OPTION BOT V1.2")
     log.info("=" * 70)
-    log.info(f"PAR: {PAR} | TIMEFRAME: M1 | ESTRATÉGIA: RSI + S/R + BOLLINGER + COOLDOWN")
+    log.info(f"PAR: {PAR} | TIMEFRAME: M1 | ESTRATÉGIA: PRICE ACTION + EXAUSTÃO")
     log.info("=" * 70)
 
     # Dispara o servidor HTTP fictício em uma thread paralela (Health Check do Render)
@@ -840,8 +808,8 @@ def main():
     api = conectar_iq()
     historico = obter_historico_inicial(api)
 
-    if len(historico) < max(BOLLINGER_PERIODO, SR_PERIODO, RSI_PERIODO + 1):
-        raise RuntimeError("Histórico insuficiente para iniciar os indicadores.")
+    if len(historico) < SR_PERIODO + 10:
+        raise RuntimeError("Histórico insuficiente para iniciar a análise de Price Action.")
 
     iniciar_stream(api)
     telegram_online()
