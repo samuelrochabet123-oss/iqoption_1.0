@@ -1,5 +1,5 @@
 # ================================================================
-# IQ OPTION BOT V1.4.3 (TESTE DE DISPARO IMEDIATO)
+# IQ OPTION BOT V1.4.4 (TESTE DE DISPARO COM CORREÇÃO DE PAYLOAD)
 # ================================================================
 
 import os
@@ -222,7 +222,7 @@ TIMEFRAME = 60  # M1
 SR_PERIODO = 20
 
 # CONFIGURAÇÃO DE TESTE IMEDIATO
-TESTE_DISPARO_IMEDIATO = True  # True para forçar ordem na 1ª vela e testar a API imediatamente
+TESTE_DISPARO_IMEDIATO = True  # True para forçar ordem na 1ª vela e testar a API
 
 EXAUSTAO_FATOR_TAMANHO = 1.2
 MIN_PAVIO_RATIO = 0.20
@@ -254,7 +254,7 @@ LOOP_SECONDS = 1
 HISTORICO_CANDLES = 100
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-log = logging.getLogger("IQOPTION-BOT-V1.4.3")
+log = logging.getLogger("IQOPTION-BOT-V1.4.4")
 
 HEADER_SINAIS = ["datetime_sinal", "par", "estrategia", "pavio_ratio", "sinal", "datetime_entrada", "entrada", "datetime_resultado", "saida", "resultado", "saldo_wl", "status"]
 HEADER_RESUMO = ["estrategia", "total_sinais", "wins", "losses", "empates", "assertividade", "saldo_wl", "maior_loss", "atual_loss"]
@@ -379,7 +379,6 @@ def calcular_suporte_resistencia(historico, periodo=20):
 def gerar_sinal_estrategia(historico, timestamp_atual):
     global ultimo_sinal_timestamp
 
-    # Se a flag de teste imediato estiver ligada, força uma ordem na 1ª oportunidade
     if TESTE_DISPARO_IMEDIATO and ultimo_sinal_timestamp == 0:
         ultimo_sinal_timestamp = timestamp_atual
         log.info("🧪 MODO TESTE IMEDIATO ATIVADO | FORÇANDO SINAL DE CALL PARA TESTAR EXECUÇÃO NA IQ OPTION")
@@ -489,20 +488,30 @@ def obter_historico_inicial(api):
 
 
 def executar_ordem_iq(api, sinal):
+    """Executa a ordem utilizando os padrões aceitos pelas novas versões da API."""
     if not MODO_AUTO:
         return False, None
 
-    direcao = "buy" if sinal == "CALL" else "sell"
-    log.info(f"⚡ ENVIANDO ORDEM PARA A IQ OPTION | Direção: {sinal} | Valor: {VALOR_ENTRADA}")
+    # Ajuste do payload: a API espera "call" ou "put" em caixa baixa
+    direcao = "call" if str(sinal).upper() == "CALL" else "put"
+    log.info(f"⚡ ENVIANDO ORDEM PARA A IQ OPTION | Direção: {direcao.upper()} | Valor: {VALOR_ENTRADA}")
 
     try:
+        # Tenta a compra de opção binária padrão
         status, id_ordem = api.buy(VALOR_ENTRADA, PAR, direcao, 1)
-        if status:
+        
+        # Se a opção binária retornar erro/recusa, tenta o disparo via opções digitais
+        if not status or str(id_ordem).lower() == "error" or "error" in str(id_ordem).lower():
+            log.warning("Tentando disparo via fallback de opções digitais...")
+            status, id_ordem = api.buy_digital_spot(PAR, VALOR_ENTRADA, direcao, 1)
+
+        if status and str(id_ordem).lower() != "error":
             log.info(f"✅ ORDEM EXECUTADA COM SUCESSO! | ID DA ORDEM: {id_ordem}")
             return True, id_ordem
         else:
             log.error(f"❌ REJEIÇÃO DA ORDEM PELA CORRETORA: {id_ordem}")
             return False, str(id_ordem)
+
     except Exception as e:
         log.exception(f"Erro ao disparar ordem via API: {e}")
         return False, str(e)
