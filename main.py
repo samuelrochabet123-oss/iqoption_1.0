@@ -1,6 +1,6 @@
 # ================================================================
-# IQ OPTION BOT V1.3
-# PRICE ACTION + EXAUSTÃO + S/R + COOLDOWN
+# IQ OPTION BOT V1.4
+# REVERSÃO À MÉDIA (RSI 14 + EMA 50 + REJEIÇÃO DE PAVIO)
 #
 # MODO:
 #   PAPER TRADING / SIMULADOR
@@ -42,7 +42,7 @@ from iqoptionapi.stable_api import IQ_Option
 
 
 # ================================================================
-# CONFIGURAÇÕES
+# CONFIGURAÇÕES DA ESTRATÉGIA MODERADA
 # ================================================================
 
 PAR = os.getenv("PAR", "EURUSD").upper()
@@ -50,22 +50,21 @@ PAR = os.getenv("PAR", "EURUSD").upper()
 # 60 segundos = M1
 TIMEFRAME = 60
 
-# Quantidade de candles usadas no histórico
+# Quantidade de candles mantidos no histórico para cálculo dos indicadores
 HISTORICO_CANDLES = 100
 
-# Suporte / resistência
-SR_PERIODO = 20
+# Parâmetros da Estratégia Moderada
+RSI_PERIODO = 14
+RSI_COMPRA = 30
+RSI_VENDA = 70
 
-# Exaustão
-EXAUSTAO_FATOR_TAMANHO = 1.5
+EMA_PERIODO = 50
 
-# Pavio mínimo em relação ao tamanho total da vela
-MIN_PAVIO_RATIO = 0.35
+MIN_PAVIO_RATIO = 0.15  # Rejeição mínima de 15% do tamanho total do candle
 
-# Cooldown entre sinais
-COOLDOWN_VELAS = 3
+COOLDOWN_VELAS = 2  # Intervalo de 2 velas após um sinal
 
-# Quantidade de candles mantidos no stream
+# Quantidade de candles mantidos no stream em tempo real
 STREAM_MAXDICT = 20
 
 # ================================================================
@@ -121,7 +120,7 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-log = logging.getLogger("IQOPTION-BOT-V1.3")
+log = logging.getLogger("IQOPTION-BOT-V1.4")
 
 
 # ================================================================
@@ -132,44 +131,23 @@ log = logging.getLogger("IQOPTION-BOT-V1.3")
 class DummyHTTPHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
-
         self.send_response(200)
-
-        self.send_header(
-            "Content-type",
-            "text/html; charset=utf-8"
-        )
-
+        self.send_header("Content-type", "text/html; charset=utf-8")
         self.end_headers()
-
         mensagem = (
-            "IQ Option Bot V1.3 "
-            "(Paper Trading / Binario M1) ONLINE"
+            "IQ Option Bot V1.4 "
+            "(Paper Trading / Estratégia Moderada M1) ONLINE"
         )
-
-        self.wfile.write(
-            mensagem.encode("utf-8")
-        )
+        self.wfile.write(mensagem.encode("utf-8"))
 
     def log_message(self, format, *args):
         return
 
 
 def iniciar_servidor_http():
-
-    porta = int(
-        os.getenv("PORT", 8080)
-    )
-
-    servidor = HTTPServer(
-        ("0.0.0.0", porta),
-        DummyHTTPHandler
-    )
-
-    log.info(
-        f"Servidor HTTP ativo na porta {porta}"
-    )
-
+    porta = int(os.getenv("PORT", 8080))
+    servidor = HTTPServer(("0.0.0.0", porta), DummyHTTPHandler)
+    log.info(f"Servidor HTTP ativo na porta {porta}")
     servidor.serve_forever()
 
 
@@ -187,7 +165,6 @@ HEADER_COLETAS = [
     "volume"
 ]
 
-
 HEADER_SINAIS = [
     "datetime_sinal",
     "par",
@@ -202,7 +179,6 @@ HEADER_SINAIS = [
     "saldo_wl",
     "status"
 ]
-
 
 HEADER_RESUMO = [
     "estrategia",
@@ -230,22 +206,14 @@ def smart_sleep_proximo_minuto():
 
 
 def para_float(valor):
-
     if valor is None or valor == "":
         return 0.0
-
     if isinstance(valor, (int, float)):
         return float(valor)
-
-    return float(
-        str(valor)
-        .replace(",", ".")
-        .strip()
-    )
+    return float(str(valor).replace(",", ".").strip())
 
 
 def timestamp_para_local(timestamp):
-
     return datetime.fromtimestamp(
         int(timestamp),
         tz=timezone.utc
@@ -253,42 +221,18 @@ def timestamp_para_local(timestamp):
 
 
 def formatar_datetime(timestamp):
-
-    return timestamp_para_local(
-        timestamp
-    ).strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
+    return timestamp_para_local(timestamp).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def normalizar_candle(timestamp, candle):
-
     return {
         "timestamp": int(timestamp),
-
-        "datetime": formatar_datetime(
-            timestamp
-        ),
-
-        "open": float(
-            candle["open"]
-        ),
-
-        "high": float(
-            candle["max"]
-        ),
-
-        "low": float(
-            candle["min"]
-        ),
-
-        "close": float(
-            candle["close"]
-        ),
-
-        "volume": float(
-            candle.get("volume", 0)
-        )
+        "datetime": formatar_datetime(timestamp),
+        "open": float(candle["open"]),
+        "high": float(candle["max"]),
+        "low": float(candle["min"]),
+        "close": float(candle["close"]),
+        "volume": float(candle.get("volume", 0))
     }
 
 
@@ -297,37 +241,19 @@ def normalizar_candle(timestamp, candle):
 # ================================================================
 
 def validar_configuracao():
-
     obrigatorias = {
-
-        "IQ_EMAIL":
-            IQ_EMAIL,
-
-        "IQ_PASSWORD":
-            IQ_PASSWORD,
-
-        "GOOGLE_CREDENTIALS_JSON":
-            GOOGLE_CREDENTIALS_JSON,
-
-        "TELEGRAM_BOT_TOKEN":
-            TELEGRAM_BOT_TOKEN,
-
-        "TELEGRAM_CHAT_ID":
-            TELEGRAM_CHAT_ID
+        "IQ_EMAIL": IQ_EMAIL,
+        "IQ_PASSWORD": IQ_PASSWORD,
+        "GOOGLE_CREDENTIALS_JSON": GOOGLE_CREDENTIALS_JSON,
+        "TELEGRAM_BOT_TOKEN": TELEGRAM_BOT_TOKEN,
+        "TELEGRAM_CHAT_ID": TELEGRAM_CHAT_ID
     }
 
-    faltando = [
-        nome
-        for nome, valor
-        in obrigatorias.items()
-        if not valor
-    ]
+    faltando = [nome for nome, valor in obrigatorias.items() if not valor]
 
     if faltando:
-
         raise RuntimeError(
-            "Variáveis de ambiente ausentes: "
-            + ", ".join(faltando)
+            "Variáveis de ambiente ausentes: " + ", ".join(faltando)
         )
 
 
@@ -336,335 +262,172 @@ def validar_configuracao():
 # ================================================================
 
 def conectar_google():
-
-    log.info(
-        "Conectando ao Google Sheets..."
-    )
-
-    info = json.loads(
-        GOOGLE_CREDENTIALS_JSON
-    )
-
+    log.info("Conectando ao Google Sheets...")
+    info = json.loads(GOOGLE_CREDENTIALS_JSON)
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-
-    credentials = (
-        Credentials
-        .from_service_account_info(
-            info,
-            scopes=scopes
-        )
-    )
-
-    client = gspread.authorize(
-        credentials
-    )
-
-    spreadsheet = client.open_by_key(
-        GOOGLE_SHEET_ID
-    )
-
-    log.info(
-        f"Planilha conectada: "
-        f"{spreadsheet.title}"
-    )
-
+    credentials = Credentials.from_service_account_info(info, scopes=scopes)
+    client = gspread.authorize(credentials)
+    spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
+    log.info(f"Planilha conectada: {spreadsheet.title}")
     return spreadsheet
 
 
-def obter_aba(
-    spreadsheet,
-    nome
-):
-
+def obter_aba(spreadsheet, nome):
     try:
-
-        return spreadsheet.worksheet(
-            nome
-        )
-
+        return spreadsheet.worksheet(nome)
     except gspread.WorksheetNotFound:
-
-        log.info(
-            f"Criando aba '{nome}'..."
-        )
-
-        return spreadsheet.add_worksheet(
-            title=nome,
-            rows=5000,
-            cols=20
-        )
+        log.info(f"Criando aba '{nome}'...")
+        return spreadsheet.add_worksheet(title=nome, rows=5000, cols=20)
 
 
-def garantir_cabecalho(
-    aba,
-    cabecalho
-):
-
+def garantir_cabecalho(aba, cabecalho):
     try:
-
         if not aba.row_values(1):
-
-            aba.update(
-                range_name="A1",
-                values=[cabecalho]
-            )
-
+            aba.update(range_name="A1", values=[cabecalho])
     except Exception as e:
-
-        log.warning(
-            f"Erro verificando cabeçalho "
-            f"{aba.title}: {e}"
-        )
+        log.warning(f"Erro verificando cabeçalho {aba.title}: {e}")
 
 
 # ================================================================
 # TELEGRAM
 # ================================================================
 
-def telegram_enviar(
-    mensagem
-):
-
-    if (
-        not TELEGRAM_BOT_TOKEN
-        or not TELEGRAM_CHAT_ID
-    ):
+def telegram_enviar(mensagem):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return False
 
-    url = (
-        "https://api.telegram.org/"
-        f"bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    )
-
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": mensagem
     }
 
     try:
-
-        resposta = requests.post(
-            url,
-            json=payload,
-            timeout=15
-        )
-
+        resposta = requests.post(url, json=payload, timeout=15)
         return resposta.status_code == 200
-
     except Exception as e:
-
-        log.warning(
-            f"Erro enviando Telegram: {e}"
-        )
-
+        log.warning(f"Erro enviando Telegram: {e}")
         return False
 
 
 # ================================================================
-# ESTRATÉGIA
-#
-# PRICE ACTION
-# +
-# EXAUSTÃO
-# +
-# SUPORTE / RESISTÊNCIA
+# CÁLCULOS TÉCNICOS (EMA E RSI)
 # ================================================================
 
-def calcular_suporte_resistencia(
-    historico,
-    periodo=20
-):
-
-    if len(historico) < periodo:
-
-        return None, None
-
-    velas_recentes = (
-        historico[-periodo:]
-    )
-
-    suporte = min(
-        c["low"]
-        for c in velas_recentes
-    )
-
-    resistencia = max(
-        c["high"]
-        for c in velas_recentes
-    )
-
-    return suporte, resistencia
+def calcular_ema(fechamentos, periodo):
+    """Calcula a Média Móvel Expansiva (EMA) de um período."""
+    if len(fechamentos) < periodo:
+        return None
+    
+    k = 2 / (periodo + 1)
+    ema = sum(fechamentos[:periodo]) / periodo
+    
+    for preco in fechamentos[periodo:]:
+        ema = (preco * k) + (ema * (1 - k))
+        
+    return ema
 
 
-def gerar_sinal_estrategia(
-    historico,
-    timestamp_atual
-):
+def calcular_rsi(fechamentos, periodo=14):
+    """Calcula o RSI de 14 períodos sobre uma lista de fechamentos."""
+    if len(fechamentos) < periodo + 1:
+        return None
 
+    ganhos = []
+    perdas = []
+
+    for i in range(1, len(fechamentos)):
+        diferenca = fechamentos[i] - fechamentos[i - 1]
+        if diferenca > 0:
+            ganhos.append(diferenca)
+            perdas.append(0.0)
+        else:
+            ganhos.append(0.0)
+            perdas.append(abs(diferenca))
+
+    if len(ganhos) < periodo:
+        return None
+
+    media_ganho = sum(ganhos[-periodo:]) / periodo
+    media_perda = sum(perdas[-periodo:]) / periodo
+
+    if media_perda == 0:
+        return 100.0
+
+    rs = media_ganho / media_perda
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+# ================================================================
+# ESTRATÉGIA MODERADA (RSI + EMA 50 + PAVIO)
+# ================================================================
+
+def gerar_sinal_estrategia(historico, timestamp_atual):
     global ultimo_sinal_timestamp
 
-    if len(historico) < (
-        SR_PERIODO + 10
-    ):
-
+    if len(historico) <= EMA_PERIODO:
         return "NEUTRO", None
 
-    if (
-        timestamp_atual
-        - ultimo_sinal_timestamp
-        <
-        (
-            COOLDOWN_VELAS
-            * TIMEFRAME
-        )
-    ):
-
+    # Checagem do Cooldown
+    if (timestamp_atual - ultimo_sinal_timestamp) < (COOLDOWN_VELAS * TIMEFRAME):
         return "NEUTRO", None
 
-    suporte, resistencia = (
-        calcular_suporte_resistencia(
-            historico[:-1],
-            SR_PERIODO
-        )
-    )
+    fechamentos = [c["close"] for c in historico]
+    
+    rsi = calcular_rsi(fechamentos, RSI_PERIODO)
+    ema_50 = calcular_ema(fechamentos, EMA_PERIODO)
 
-    if (
-        suporte is None
-        or resistencia is None
-    ):
-
+    if rsi is None or ema_50 is None:
         return "NEUTRO", None
 
     vela_atual = historico[-1]
-
-    velas_anteriores = (
-        historico[-11:-1]
-    )
-
     abertura = vela_atual["open"]
     fechamento = vela_atual["close"]
-
     maxima = vela_atual["high"]
     minima = vela_atual["low"]
 
-    tamanho_total = (
-        maxima - minima
-    )
-
+    tamanho_total = maxima - minima
     if tamanho_total == 0:
-
         return "NEUTRO", None
 
-    tamanhos_anteriores = [
-        c["high"] - c["low"]
-        for c in velas_anteriores
-    ]
+    pavio_superior = maxima - max(abertura, fechamento)
+    pavio_inferior = min(abertura, fechamento) - minima
 
-    if tamanhos_anteriores:
+    ratio_pavio_sup = pavio_superior / tamanho_total
+    ratio_pavio_inf = pavio_inferior / tamanho_total
 
-        media_tamanho = (
-            sum(tamanhos_anteriores)
-            /
-            len(tamanhos_anteriores)
-        )
-
-    else:
-
-        media_tamanho = 0.0001
-
-    eh_exaustao = (
-        tamanho_total
-        >=
-        (
-            media_tamanho
-            *
-            EXAUSTAO_FATOR_TAMANHO
-        )
-    )
-
-    pavio_superior = (
-        maxima
-        -
-        max(
-            abertura,
-            fechamento
-        )
-    )
-
-    pavio_inferior = (
-        min(
-            abertura,
-            fechamento
-        )
-        -
-        minima
-    )
-
-    ratio_pavio_sup = (
-        pavio_superior
-        /
-        tamanho_total
-    )
-
-    ratio_pavio_inf = (
-        pavio_inferior
-        /
-        tamanho_total
-    )
-
+    # GATILHO DE COMPRA:
+    # 1. Vela de Baixa (close < open)
+    # 2. RSI < 30 (Sobrevenda)
+    # 3. Tendência de Alta de curto prazo (close > EMA 50)
+    # 4. Rejeição com pavio inferior >= 15%
     if (
-        eh_exaustao
-        and maxima >= resistencia
-        and fechamento > abertura
-        and ratio_pavio_sup
-        >= MIN_PAVIO_RATIO
+        fechamento < abertura
+        and rsi < RSI_COMPRA
+        and fechamento > ema_50
+        and ratio_pavio_inf >= MIN_PAVIO_RATIO
     ):
+        ultimo_sinal_timestamp = timestamp_atual
+        return "COMPRA", round(ratio_pavio_inf * 100, 2)
 
-        ultimo_sinal_timestamp = (
-            timestamp_atual
-        )
-
-        return (
-            "VENDA",
-            round(
-                ratio_pavio_sup * 100,
-                2
-            )
-        )
-
+    # GATILHO DE VENDA:
+    # 1. Vela de Alta (close > open)
+    # 2. RSI > 70 (Sobrecompra)
+    # 3. Tendência de Baixa de curto prazo (close < EMA 50)
+    # 4. Rejeição com pavio superior >= 15%
     if (
-        eh_exaustao
-        and minima <= suporte
-        and fechamento < abertura
-        and ratio_pavio_inf
-        >= MIN_PAVIO_RATIO
+        fechamento > abertura
+        and rsi > RSI_VENDA
+        and fechamento < ema_50
+        and ratio_pavio_sup >= MIN_PAVIO_RATIO
     ):
+        ultimo_sinal_timestamp = timestamp_atual
+        return "VENDA", round(ratio_pavio_sup * 100, 2)
 
-        ultimo_sinal_timestamp = (
-            timestamp_atual
-        )
-
-        return (
-            "COMPRA",
-            round(
-                ratio_pavio_inf * 100,
-                2
-            )
-        )
-
-    return (
-        "NEUTRO",
-        round(
-            max(
-                ratio_pavio_sup,
-                ratio_pavio_inf
-            ) * 100,
-            2
-        )
-    )
+    return "NEUTRO", round(max(ratio_pavio_sup, ratio_pavio_inf) * 100, 2)
 
 
 # ================================================================
@@ -672,156 +435,71 @@ def gerar_sinal_estrategia(
 # ================================================================
 
 def conectar_iq():
-
-    log.info(
-        f"Conectando IQ Option | "
-        f"PAR={PAR}"
-    )
-
-    api = IQ_Option(
-        IQ_EMAIL,
-        IQ_PASSWORD
-    )
+    log.info(f"Conectando IQ Option | PAR={PAR}")
+    api = IQ_Option(IQ_EMAIL, IQ_PASSWORD)
 
     try:
-
         api.set_max_reconnect(-1)
-
     except Exception:
-
         pass
 
-    conectado, motivo = (
-        api.connect()
-    )
+    conectado, motivo = api.connect()
 
     if not conectado:
+        raise RuntimeError(f"Falha na conexão IQ Option: {motivo}")
 
-        raise RuntimeError(
-            f"Falha na conexão IQ Option: "
-            f"{motivo}"
-        )
-
-    api.change_balance(
-        "PRACTICE"
-    )
-
-    log.info(
-        "IQ Option conectada | "
-        "MODO PAPER TRADING"
-    )
-
+    api.change_balance("PRACTICE")
+    log.info("IQ Option conectada | MODO PAPER TRADING")
     return api
 
 
 def iniciar_stream(api):
-
-    api.start_candles_stream(
-        PAR,
-        TIMEFRAME,
-        STREAM_MAXDICT
-    )
-
+    api.start_candles_stream(PAR, TIMEFRAME, STREAM_MAXDICT)
     time.sleep(2)
 
 
 def obter_stream_candles(api):
-
-    # COLETA DIRETA DE ALTA PRECISÃO NO SEGUNDO ZERO EXATO
     try:
-
-        dados_historico = api.get_candles(
-            PAR,
-            TIMEFRAME,
-            3,
-            int(time.time())
-        )
-
+        dados_historico = api.get_candles(PAR, TIMEFRAME, 3, int(time.time()))
         if dados_historico and len(dados_historico) >= 2:
-
             candles = [
                 normalizar_candle(c["from"], c)
                 for c in dados_historico
                 if "from" in c
             ]
-
             candles.sort(key=lambda x: x["timestamp"])
-
             return candles
-
     except Exception as e:
-
         log.warning(f"Erro na coleta precisa via API: {e}")
 
-    dados = api.get_realtime_candles(
-        PAR,
-        TIMEFRAME
-    )
-
+    dados = api.get_realtime_candles(PAR, TIMEFRAME)
     if not dados:
-
         return []
 
     candles = []
-
     for timestamp, candle in dados.items():
-
         try:
-
             if "open" in candle:
-
-                candles.append(
-                    normalizar_candle(
-                        timestamp,
-                        candle
-                    )
-                )
-
+                candles.append(normalizar_candle(timestamp, candle))
         except Exception:
-
             pass
 
-    candles.sort(
-        key=lambda x:
-        x["timestamp"]
-    )
-
+    candles.sort(key=lambda x: x["timestamp"])
     return candles
 
 
 def obter_historico_inicial(api):
-
     try:
-
-        dados = api.get_candles(
-            PAR,
-            TIMEFRAME,
-            HISTORICO_CANDLES,
-            int(time.time())
-        )
-
+        dados = api.get_candles(PAR, TIMEFRAME, HISTORICO_CANDLES, int(time.time()))
         candles = [
-            normalizar_candle(
-                c["from"],
-                c
-            )
+            normalizar_candle(c["from"], c)
             for c in dados
             if "from" in c
         ]
-
-        candles.sort(
-            key=lambda x:
-            x["timestamp"]
-        )
-
+        candles.sort(key=lambda x: x["timestamp"])
         return candles
-
     except Exception as e:
-
-        log.warning(
-            f"Erro obtendo histórico: {e}"
-        )
-
+        log.warning(f"Erro obtendo histórico: {e}")
         return []
 
 
@@ -829,93 +507,41 @@ def obter_historico_inicial(api):
 # GOOGLE SHEETS - COLETAS
 # ================================================================
 
-def carregar_timestamps_coletas(
-    aba
-):
-
+def carregar_timestamps_coletas(aba):
     try:
-
         valores = aba.col_values(1)
-
         timestamps = set()
 
         for valor in valores[1:]:
-
-            if (
-                not valor
-                or valor.lower()
-                == "datetime"
-            ):
+            if not valor or valor.lower() == "datetime":
                 continue
-
             try:
-
-                dt = (
-                    datetime
-                    .strptime(
-                        valor.strip(),
-                        "%Y-%m-%d %H:%M:%S"
-                    )
-                    .replace(
-                        tzinfo=TZ_LOCAL
-                    )
-                )
-
-                timestamps.add(
-                    int(
-                        dt.timestamp()
-                    )
-                )
-
+                dt = datetime.strptime(valor.strip(), "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ_LOCAL)
+                timestamps.add(int(dt.timestamp()))
             except Exception:
-
                 continue
 
         return timestamps
-
     except Exception:
-
         return set()
 
 
-def registrar_candle(
-    aba,
-    candle
-):
-
+def registrar_candle(aba, candle):
     linha = [
-
         candle["datetime"],
-
         PAR,
-
         candle["open"],
-
         candle["high"],
-
         candle["low"],
-
         candle["close"],
-
         candle["volume"]
     ]
 
     try:
-
-        aba.append_row(
-            linha,
-            value_input_option=
-            "USER_ENTERED"
-        )
-
+        aba.append_row(linha, value_input_option="USER_ENTERED")
         return True
-
     except Exception as e:
-
-        log.warning(
-            f"Erro registrando candle: {e}"
-        )
-
+        log.warning(f"Erro registrando candle: {e}")
         return False
 
 
@@ -923,74 +549,34 @@ def registrar_candle(
 # SINAIS
 # ================================================================
 
-def carregar_sinais(
-    aba
-):
-
+def carregar_sinais(aba):
     try:
-
         valores = aba.get_all_values()
-
         sinais = {}
 
-        for numero_linha, row in enumerate(
-            valores[1:],
-            start=2
-        ):
-
+        for numero_linha, row in enumerate(valores[1:], start=2):
             if len(row) < 12:
                 continue
 
             sinais[row[0]] = {
-
-                "linha":
-                    numero_linha,
-
-                "datetime_sinal":
-                    row[0],
-
-                "par":
-                    row[1],
-
-                "estrategia":
-                    row[2],
-
-                "pavio_ratio":
-                    row[3],
-
-                "direcao":
-                    row[4],
-
-                "datetime_entrada":
-                    row[5],
-
-                "preco_entrada":
-                    row[6],
-
-                "datetime_expiracao":
-                    row[7],
-
-                "preco_expiracao":
-                    row[8],
-
-                "resultado":
-                    row[9],
-
-                "saldo_wl":
-                    row[10],
-
-                "status":
-                    row[11]
+                "linha": numero_linha,
+                "datetime_sinal": row[0],
+                "par": row[1],
+                "estrategia": row[2],
+                "pavio_ratio": row[3],
+                "direcao": row[4],
+                "datetime_entrada": row[5],
+                "preco_entrada": row[6],
+                "datetime_expiracao": row[7],
+                "preco_expiracao": row[8],
+                "resultado": row[9],
+                "saldo_wl": row[10],
+                "status": row[11]
             }
 
         return sinais
-
     except Exception as e:
-
-        log.warning(
-            f"Erro carregando sinais: {e}"
-        )
-
+        log.warning(f"Erro carregando sinais: {e}")
         return {}
 
 
@@ -998,139 +584,59 @@ def carregar_sinais(
 # CRIAÇÃO DO SINAL
 # ================================================================
 
-def criar_sinal_simulado(
-    aba,
-    candle_sinal,
-    candle_entrada,
-    pavio_ratio,
-    direcao,
-    sinais_existentes
-):
+def criar_sinal_simulado(aba, candle_sinal, candle_entrada, pavio_ratio, direcao, sinais_existentes):
+    datetime_sinal = candle_sinal["datetime"]
 
-    datetime_sinal = (
-        candle_sinal["datetime"]
-    )
-
-    if (
-        datetime_sinal
-        in sinais_existentes
-    ):
-
+    if datetime_sinal in sinais_existentes:
         return False
 
-    preco_entrada = (
-        candle_entrada["open"]
-    )
+    preco_entrada = candle_entrada["open"]
+    timestamp_entrada = candle_entrada["timestamp"]
+    timestamp_expiracao = timestamp_entrada + EXPIRACAO_SEGUNDOS
 
-    timestamp_entrada = (
-        candle_entrada["timestamp"]
-    )
-
-    timestamp_expiracao = (
-        timestamp_entrada
-        + EXPIRACAO_SEGUNDOS
-    )
-
-    datetime_entrada = (
-        candle_entrada["datetime"]
-    )
-
-    datetime_expiracao = (
-        formatar_datetime(
-            timestamp_expiracao
-        )
-    )
+    datetime_entrada = candle_entrada["datetime"]
+    datetime_expiracao = formatar_datetime(timestamp_expiracao)
 
     linha = [
-
         datetime_sinal,
-
         PAR,
-
-        "Price Action + Exaustao",
-
+        "RSI + EMA 50 + Pavio",
         f"{pavio_ratio}%",
-
         direcao,
-
         datetime_entrada,
-
         preco_entrada,
-
         datetime_expiracao,
-
         "",
-
         "AGUARDANDO",
-
         "",
-
         "ABERTO"
     ]
 
     try:
-
-        aba.append_row(
-            linha,
-            value_input_option=
-            "USER_ENTERED"
-        )
+        aba.append_row(linha, value_input_option="USER_ENTERED")
 
         log.info("=" * 60)
-
-        log.info(
-            f"🚨 NOVO SINAL | "
-            f"{direcao}"
-        )
-
-        log.info(
-            f"PAR: {PAR}"
-        )
-
-        log.info(
-            f"ENTRADA: "
-            f"{datetime_entrada}"
-        )
-
-        log.info(
-            f"PREÇO ENTRADA: "
-            f"{preco_entrada}"
-        )
-
-        log.info(
-            f"EXPIRAÇÃO: "
-            f"{datetime_expiracao}"
-        )
-
-        log.info(
-            f"PAVIO: "
-            f"{pavio_ratio}%"
-        )
-
+        log.info(f"🚨 NOVO SINAL | {direcao}")
+        log.info(f"PAR: {PAR}")
+        log.info(f"ENTRADA: {datetime_entrada}")
+        log.info(f"PREÇO ENTRADA: {preco_entrada}")
+        log.info(f"EXPIRAÇÃO: {datetime_expiracao}")
+        log.info(f"PAVIO REJEIÇÃO: {pavio_ratio}%")
         log.info("=" * 60)
 
         telegram_enviar(
-            "🚨 NOVO SINAL M1\n\n"
+            "🚨 NOVO SINAL M1 (Estratégia Moderada)\n\n"
             f"Par: {PAR}\n"
             f"Direção: {direcao}\n"
-            f"Entrada: "
-            f"{datetime_entrada}\n"
-            f"Preço: "
-            f"{preco_entrada}\n"
-            f"Expiração: "
-            f"{datetime_expiracao}\n"
-            f"Pavio: "
-            f"{pavio_ratio}%"
+            f"Entrada: {datetime_entrada}\n"
+            f"Preço: {preco_entrada}\n"
+            f"Expiração: {datetime_expiracao}\n"
+            f"Pavio Rejeição: {pavio_ratio}%"
         )
 
         return True
-
     except Exception as e:
-
-        log.warning(
-            f"Erro criando sinal: {e}"
-        )
-
+        log.warning(f"Erro criando sinal: {e}")
         return False
 
 
@@ -1138,39 +644,18 @@ def criar_sinal_simulado(
 # RESULTADO DA OPERAÇÃO
 # ================================================================
 
-def determinar_resultado(
-    direcao,
-    entrada,
-    saida
-):
-
-    entrada = para_float(
-        entrada
-    )
-
-    saida = para_float(
-        saida
-    )
+def determinar_resultado(direcao, entrada, saida):
+    entrada = para_float(entrada)
+    saida = para_float(saida)
 
     if saida == entrada:
-
         return "EMPATE"
 
     if direcao == "COMPRA":
-
-        if saida > entrada:
-
-            return "WIN"
-
-        return "LOSS"
+        return "WIN" if saida > entrada else "LOSS"
 
     if direcao == "VENDA":
-
-        if saida < entrada:
-
-            return "WIN"
-
-        return "LOSS"
+        return "WIN" if saida < entrada else "LOSS"
 
     return "EMPATE"
 
@@ -1179,199 +664,78 @@ def determinar_resultado(
 # ATUALIZAR RESULTADOS
 # ================================================================
 
-def atualizar_resultados(
-    aba_sinais,
-    sinais,
-    candle_fechado
-):
-
+def atualizar_resultados(aba_sinais, sinais, candle_fechado):
     if not sinais:
-
         return 0
 
     alterados = 0
+    ts_fechado = candle_fechado["timestamp"]
+    preco_saida = candle_fechado["close"]
 
-    ts_fechado = (
-        candle_fechado["timestamp"]
-    )
-
-    preco_saida = (
-        candle_fechado["close"]
-    )
-
-    for dt_sinal, sinal in list(
-        sinais.items()
-    ):
-
-        if (
-            sinal.get("status")
-            != "ABERTO"
-        ):
-
+    for dt_sinal, sinal in list(sinais.items()):
+        if sinal.get("status") != "ABERTO":
             continue
 
         try:
+            dt_entrada = datetime.strptime(
+                sinal["datetime_entrada"], "%Y-%m-%d %H:%M:%S"
+            ).replace(tzinfo=TZ_LOCAL)
 
-            dt_entrada = (
-                datetime
-                .strptime(
-                    sinal[
-                        "datetime_entrada"
-                    ],
-                    "%Y-%m-%d %H:%M:%S"
-                )
-                .replace(
-                    tzinfo=TZ_LOCAL
-                )
-            )
+            ts_entrada = int(dt_entrada.timestamp())
+            ts_expiracao = ts_entrada + EXPIRACAO_SEGUNDOS
 
-            ts_entrada = int(
-                dt_entrada.timestamp()
-            )
+            if ts_fechado >= ts_expiracao:
+                entrada = para_float(sinal["preco_entrada"])
+                saida = para_float(preco_saida)
 
-            ts_expiracao = (
-                ts_entrada
-                + EXPIRACAO_SEGUNDOS
-            )
-
-            if (
-                ts_fechado
-                >= ts_expiracao
-            ):
-
-                entrada = para_float(
-                    sinal[
-                        "preco_entrada"
-                    ]
+                resultado = determinar_resultado(
+                    sinal["direcao"], entrada, saida
                 )
 
-                saida = para_float(
-                    preco_saida
-                )
-
-                resultado = (
-                    determinar_resultado(
-                        sinal["direcao"],
-                        entrada,
-                        saida
-                    )
-                )
-
-                linha = sinal[
-                    "linha"
-                ]
-
+                linha = sinal["linha"]
                 if not linha:
-
                     continue
 
-                saldo_wl = {
-                    "WIN": 1,
-                    "LOSS": -1,
-                    "EMPATE": 0
-                }.get(
-                    resultado,
-                    0
-                )
+                saldo_wl = {"WIN": 1, "LOSS": -1, "EMPATE": 0}.get(resultado, 0)
 
                 aba_sinais.update(
-                    range_name=
-                    f"H{linha}:L{linha}",
-
+                    range_name=f"H{linha}:L{linha}",
                     values=[[
-                        candle_fechado[
-                            "datetime"
-                        ],
-
+                        candle_fechado["datetime"],
                         saida,
-
                         resultado,
-
                         saldo_wl,
-
                         "FECHADO"
                     ]],
-
-                    value_input_option=
-                    "USER_ENTERED"
+                    value_input_option="USER_ENTERED"
                 )
 
-                sinal[
-                    "status"
-                ] = "FECHADO"
-
-                sinal[
-                    "resultado"
-                ] = resultado
-
-                sinal[
-                    "saldo_wl"
-                ] = saldo_wl
+                sinal["status"] = "FECHADO"
+                sinal["resultado"] = resultado
+                sinal["saldo_wl"] = saldo_wl
 
                 alterados += 1
+                emoji = {"WIN": "✅", "LOSS": "❌", "EMPATE": "⚪"}.get(resultado, "⚪")
 
-                emoji = {
-
-                    "WIN": "✅",
-
-                    "LOSS": "❌",
-
-                    "EMPATE": "⚪"
-
-                }.get(
-                    resultado,
-                    "⚪"
-                )
-
-                log.info(
-                    "=" * 60
-                )
-
-                log.info(
-                    f"{emoji} "
-                    f"RESULTADO | "
-                    f"{resultado}"
-                )
-
-                log.info(
-                    f"Par: {PAR}"
-                )
-
-                log.info(
-                    f"Direção: "
-                    f"{sinal['direcao']}"
-                )
-
-                log.info(
-                    f"Entrada: "
-                    f"{entrada}"
-                )
-
-                log.info(
-                    f"Expiração: "
-                    f"{saida}"
-                )
-
-                log.info(
-                    "=" * 60
-                )
+                log.info("=" * 60)
+                log.info(f"{emoji} RESULTADO | {resultado}")
+                log.info(f"Par: {PAR}")
+                log.info(f"Direção: {sinal['direcao']}")
+                log.info(f"Entrada: {entrada}")
+                log.info(f"Expiração: {saida}")
+                log.info("=" * 60)
 
                 telegram_enviar(
                     f"{emoji} RESULTADO M1\n\n"
                     f"Par: {PAR}\n"
-                    f"Direção: "
-                    f"{sinal['direcao']}\n"
+                    f"Direção: {sinal['direcao']}\n"
                     f"Entrada: {entrada}\n"
                     f"Expiração: {saida}\n"
                     f"Resultado: {resultado}"
                 )
 
         except Exception as e:
-
-            log.exception(
-                f"Erro fechando sinal "
-                f"{dt_sinal}: {e}"
-            )
+            log.exception(f"Erro fechando sinal {dt_sinal}: {e}")
 
     return alterados
 
@@ -1380,161 +744,70 @@ def atualizar_resultados(
 # RESUMO
 # ================================================================
 
-def calcular_resumo(
-    sinais
-):
-
+def calcular_resumo(sinais):
     wins = 0
     losses = 0
     empates = 0
-
     atual_loss = 0
     maior_loss = 0
 
     sinais_ordenados = sorted(
         sinais.values(),
-        key=lambda x:
-        x.get(
-            "datetime_sinal",
-            ""
-        )
+        key=lambda x: x.get("datetime_sinal", "")
     )
 
     for sinal in sinais_ordenados:
-
-        res = str(
-            sinal.get(
-                "resultado",
-                ""
-            )
-        ).upper()
+        res = str(sinal.get("resultado", "")).upper()
 
         if res == "WIN":
-
             wins += 1
-
             atual_loss = 0
-
         elif res == "LOSS":
-
             losses += 1
-
             atual_loss += 1
-
-            maior_loss = max(
-                maior_loss,
-                atual_loss
-            )
-
+            maior_loss = max(maior_loss, atual_loss)
         elif res == "EMPATE":
-
             empates += 1
 
-    total = (
-        wins
-        +
-        losses
-        +
-        empates
-    )
-
-    assertividade = (
-
-        wins
-        /
-        (wins + losses)
-        *
-        100
-
-    ) if (
-        wins + losses
-    ) > 0 else 0.0
-
-    saldo = (
-        wins - losses
-    )
+    total = wins + losses + empates
+    assertividade = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0.0
+    saldo = wins - losses
 
     return {
-
-        "total":
-            total,
-
-        "wins":
-            wins,
-
-        "losses":
-            losses,
-
-        "empates":
-            empates,
-
-        "assertividade":
-            assertividade,
-
-        "saldo":
-            saldo,
-
-        "maior_loss":
-            maior_loss,
-
-        "atual_loss":
-            atual_loss
+        "total": total,
+        "wins": wins,
+        "losses": losses,
+        "empates": empates,
+        "assertividade": assertividade,
+        "saldo": saldo,
+        "maior_loss": maior_loss,
+        "atual_loss": atual_loss
     }
 
 
-def atualizar_resumo(
-    aba_resumo,
-    sinais
-):
-
-    resumo = calcular_resumo(
-        sinais
-    )
+def atualizar_resumo(aba_resumo, sinais):
+    resumo = calcular_resumo(sinais)
 
     linha = [
-
-        "Price Action + Exaustao",
-
+        "RSI + EMA 50 + Pavio",
         resumo["total"],
-
         resumo["wins"],
-
         resumo["losses"],
-
         resumo["empates"],
-
-        round(
-            resumo["assertividade"],
-            2
-        ),
-
+        round(resumo["assertividade"], 2),
         resumo["saldo"],
-
         resumo["maior_loss"],
-
         resumo["atual_loss"]
     ]
 
     try:
-
         aba_resumo.update(
-
             range_name="A1:I2",
-
-            values=[
-                HEADER_RESUMO,
-                linha
-            ],
-
-            value_input_option=
-            "USER_ENTERED"
+            values=[HEADER_RESUMO, linha],
+            value_input_option="USER_ENTERED"
         )
-
     except Exception as e:
-
-        log.warning(
-            f"Erro atualizando resumo: {e}"
-        )
+        log.warning(f"Erro atualizando resumo: {e}")
 
     return resumo
 
@@ -1544,124 +817,49 @@ def atualizar_resumo(
 # ================================================================
 
 def main():
-
-    threading.Thread(
-        target=iniciar_servidor_http,
-        daemon=True
-    ).start()
+    threading.Thread(target=iniciar_servidor_http, daemon=True).start()
 
     validar_configuracao()
 
-    spreadsheet = (
-        conectar_google()
-    )
+    spreadsheet = conectar_google()
 
-    aba_coletas = (
-        obter_aba(
-            spreadsheet,
-            ABA_COLETAS
-        )
-    )
+    aba_coletas = obter_aba(spreadsheet, ABA_COLETAS)
+    aba_sinais = obter_aba(spreadsheet, ABA_SINAIS)
+    aba_resumo = obter_aba(spreadsheet, ABA_RESUMO)
 
-    aba_sinais = (
-        obter_aba(
-            spreadsheet,
-            ABA_SINAIS
-        )
-    )
+    garantir_cabecalho(aba_coletas, HEADER_COLETAS)
+    garantir_cabecalho(aba_sinais, HEADER_SINAIS)
+    garantir_cabecalho(aba_resumo, HEADER_RESUMO)
 
-    aba_resumo = (
-        obter_aba(
-            spreadsheet,
-            ABA_RESUMO
-        )
-    )
-
-    garantir_cabecalho(
-        aba_coletas,
-        HEADER_COLETAS
-    )
-
-    garantir_cabecalho(
-        aba_sinais,
-        HEADER_SINAIS
-    )
-
-    garantir_cabecalho(
-        aba_resumo,
-        HEADER_RESUMO
-    )
-
-    timestamps_coletas = (
-        carregar_timestamps_coletas(
-            aba_coletas
-        )
-    )
-
-    sinais = (
-        carregar_sinais(
-            aba_sinais
-        )
-    )
+    timestamps_coletas = carregar_timestamps_coletas(aba_coletas)
+    sinais = carregar_sinais(aba_sinais)
 
     api = conectar_iq()
-
-    historico = (
-        obter_historico_inicial(
-            api
-        )
-    )
-
-    iniciar_stream(
-        api
-    )
+    historico = obter_historico_inicial(api)
+    iniciar_stream(api)
 
     telegram_enviar(
-        "🤖 IQ OPTION BOT V1.3\n\n"
+        "🤖 IQ OPTION BOT V1.4\n\n"
         "Modo: PAPER TRADING\n"
+        "Estratégia: RSI(14) + EMA(50) + Pavio(15%)\n"
         f"Par: {PAR}\n"
         "Timeframe: M1\n"
         "Expiração: 1 minuto\n"
-        "Direções: COMPRA / VENDA\n"
-        "Execução real: DESATIVADA"
+        "Direções: COMPRA / VENDA"
     )
 
-    log.info(
-        "=" * 60
-    )
-
-    log.info(
-        "IQ OPTION BOT V1.3 ONLINE"
-    )
-
-    log.info(
-        f"PAR: {PAR}"
-    )
-
-    log.info(
-        "TIMEFRAME: M1"
-    )
-
-    log.info(
-        "EXPIRAÇÃO: 1 MINUTO"
-    )
-
-    log.info(
-        "MODO: PAPER TRADING"
-    )
-
-    log.info(
-        "=" * 60
-    )
+    log.info("=" * 60)
+    log.info("IQ OPTION BOT V1.4 ONLINE")
+    log.info("ESTRATÉGIA: RSI(14) + EMA(50) + Pavio(15%)")
+    log.info(f"PAR: {PAR}")
+    log.info("TIMEFRAME: M1")
+    log.info("EXPIRAÇÃO: 1 MINUTO")
+    log.info("MODO: PAPER TRADING")
+    log.info("=" * 60)
 
     ultimo_timestamp_processado = None
 
-    # ============================================================
-    # LOOP COM SINCRONIZAÇÃO EM TEMPO REAL
-    # ============================================================
-
     while True:
-
         try:
 
             # 1. ESPERA SINCRONIZADA MATEMATICAMENTE NA VIRADA DO SEGUNDO :00.050
@@ -1669,249 +867,94 @@ def main():
 
             # 2. CHECAGEM DE CONEXÃO
             if not api.check_connect():
-
-                log.warning(
-                    "Conexão perdida. "
-                    "Reconectando..."
-                )
-
+                log.warning("Conexão perdida. Reconectando...")
                 api = conectar_iq()
-
-                iniciar_stream(
-                    api
-                )
-
+                iniciar_stream(api)
                 continue
 
             # 3. OBTENÇÃO CIRÚRGICA DOS CANDLES
-            candles_stream = (
-                obter_stream_candles(
-                    api
-                )
-            )
-
+            candles_stream = obter_stream_candles(api)
             if not candles_stream:
                 continue
 
-            timestamp_atual = (
-                candles_stream[-1][
-                    "timestamp"
-                ]
-            )
+            timestamp_atual = candles_stream[-1]["timestamp"]
 
-            if (
-                ultimo_timestamp_processado
-                is None
-            ):
-
-                ultimo_timestamp_processado = (
-                    timestamp_atual
-                )
-
+            if ultimo_timestamp_processado is None:
+                ultimo_timestamp_processado = timestamp_atual
                 log.info(
                     "Stream inicializado | "
-                    f"Último candle: "
-                    f"{candles_stream[-1]['datetime']}"
+                    f"Último candle: {candles_stream[-1]['datetime']}"
                 )
-
                 continue
 
             # 4. EXECUÇÃO NA NOVA VELA
-            if (
-                timestamp_atual
-                >
-                ultimo_timestamp_processado
-            ):
+            if timestamp_atual > ultimo_timestamp_processado:
+                mapa = {c["timestamp"]: c for c in candles_stream}
+                ts_fechada = timestamp_atual - TIMEFRAME
 
-                mapa = {
-
-                    c["timestamp"]: c
-
-                    for c
-                    in candles_stream
-                }
-
-                ts_fechada = (
-                    timestamp_atual
-                    -
-                    TIMEFRAME
-                )
-
-                vela_fechada = (
-                    mapa.get(
-                        ts_fechada
-                    )
-                )
-
-                vela_entrada = (
-                    mapa.get(
-                        timestamp_atual
-                    )
-                )
+                vela_fechada = mapa.get(ts_fechada)
+                vela_entrada = mapa.get(timestamp_atual)
 
                 if vela_fechada:
-
                     # 1. REGISTRAR CANDLE
-                    if (
-                        ts_fechada
-                        not in
-                        timestamps_coletas
-                    ):
-
-                        sucesso = (
-                            registrar_candle(
-                                aba_coletas,
-                                vela_fechada
-                            )
-                        )
-
+                    if ts_fechada not in timestamps_coletas:
+                        sucesso = registrar_candle(aba_coletas, vela_fechada)
                         if sucesso:
-
-                            timestamps_coletas.add(
-                                ts_fechada
-                            )
-
+                            timestamps_coletas.add(ts_fechada)
                             log.info(
-                                "📊 CANDLE "
-                                f"REGISTRADO | "
-                                f"{vela_fechada['datetime']} | "
-                                f"O={vela_fechada['open']} | "
-                                f"H={vela_fechada['high']} | "
-                                f"L={vela_fechada['low']} | "
-                                f"C={vela_fechada['close']}"
+                                f"📊 CANDLE REGISTRADO | {vela_fechada['datetime']} | "
+                                f"O={vela_fechada['open']} | H={vela_fechada['high']} | "
+                                f"L={vela_fechada['low']} | C={vela_fechada['close']}"
                             )
 
                     # 2. FECHAR OPERAÇÕES EXPIRADAS
-                    sinais = (
-                        carregar_sinais(
-                            aba_sinais
-                        )
-                    )
-
-                    resultados = (
-                        atualizar_resultados(
-                            aba_sinais,
-                            sinais,
-                            vela_fechada
-                        )
+                    sinais = carregar_sinais(aba_sinais)
+                    resultados = atualizar_resultados(
+                        aba_sinais, sinais, vela_fechada
                     )
 
                     if resultados > 0:
-
-                        sinais = (
-                            carregar_sinais(
-                                aba_sinais
-                            )
-                        )
-
-                        resumo = (
-                            atualizar_resumo(
-                                aba_resumo,
-                                sinais
-                            )
-                        )
-
+                        sinais = carregar_sinais(aba_sinais)
+                        resumo = atualizar_resumo(aba_resumo, sinais)
                         log.info(
-                            "📊 RESUMO | "
-                            f"W={resumo['wins']} "
-                            f"L={resumo['losses']} "
-                            f"E={resumo['empates']} "
-                            f"ACC={resumo['assertividade']:.2f}% "
+                            f"📊 RESUMO | W={resumo['wins']} L={resumo['losses']} "
+                            f"E={resumo['empates']} ACC={resumo['assertividade']:.2f}% "
                             f"SALDO={resumo['saldo']}"
                         )
 
                     # 3. ATUALIZAR HISTÓRICO
                     historico = [
-
-                        c
-
-                        for c
-                        in historico
-
-                        if c["timestamp"]
-                        !=
-                        vela_fechada[
-                            "timestamp"
-                        ]
+                        c for c in historico
+                        if c["timestamp"] != vela_fechada["timestamp"]
                     ]
+                    historico.append(vela_fechada)
+                    historico.sort(key=lambda x: x["timestamp"])
+                    historico = historico[-HISTORICO_CANDLES:]
 
-                    historico.append(
-                        vela_fechada
-                    )
-
-                    historico.sort(
-                        key=lambda x:
-                        x["timestamp"]
-                    )
-
-                    historico = (
-                        historico[
-                            -HISTORICO_CANDLES:
-                        ]
-                    )
-
-                    # 4. GERAR NOVO SINAL
-                    sinal, pavio_ratio = (
-                        gerar_sinal_estrategia(
-                            historico,
-                            timestamp_atual
-                        )
+                    # 4. GERAR NOVO SINAL COM ESTRATÉGIA MODERADA
+                    sinal, pavio_ratio = gerar_sinal_estrategia(
+                        historico, timestamp_atual
                     )
 
                     # 5. CRIAR OPERAÇÃO SIMULADA
-                    if (
-                        sinal
-                        in (
-                            "COMPRA",
-                            "VENDA"
-                        )
-                        and
-                        vela_entrada
-                    ):
-
+                    if sinal in ("COMPRA", "VENDA") and vela_entrada:
                         criar_sinal_simulado(
-
                             aba_sinais,
-
                             vela_fechada,
-
                             vela_entrada,
-
                             pavio_ratio,
-
                             sinal,
-
                             sinais
                         )
+                        sinais = carregar_sinais(aba_sinais)
+                        atualizar_resumo(aba_resumo, sinais)
 
-                        sinais = (
-                            carregar_sinais(
-                                aba_sinais
-                            )
-                        )
-
-                        atualizar_resumo(
-                            aba_resumo,
-                            sinais
-                        )
-
-                    ultimo_timestamp_processado = (
-                        timestamp_atual
-                    )
+                    ultimo_timestamp_processado = timestamp_atual
 
         except Exception as e:
-
-            log.exception(
-                f"Erro no loop principal: {e}"
-            )
-
+            log.exception(f"Erro no loop principal: {e}")
             time.sleep(5)
 
 
-# ================================================================
-# EXECUÇÃO
-# ================================================================
-
 if __name__ == "__main__":
-
     main()
