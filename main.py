@@ -1,6 +1,6 @@
 # ================================================================
-# IQ OPTION BOT V1.4
-# REVERSÃO À MÉDIA (RSI 14 + EMA 50 + REJEIÇÃO DE PAVIO)
+# IQ OPTION BOT V1.5
+# SUPORTE/RESISTÊNCIA DINÂMICO + ADX + RSI + PAVIO
 #
 # MODO:
 #   PAPER TRADING / SIMULADOR
@@ -42,7 +42,7 @@ from iqoptionapi.stable_api import IQ_Option
 
 
 # ================================================================
-# CONFIGURAÇÕES DA ESTRATÉGIA MODERADA
+# CONFIGURAÇÕES DA ESTRATÉGIA (S&R DINÂMICO + ADX + RSI)
 # ================================================================
 
 PAR = os.getenv("PAR", "EURUSD").upper()
@@ -53,16 +53,18 @@ TIMEFRAME = 60
 # Quantidade de candles mantidos no histórico para cálculo dos indicadores
 HISTORICO_CANDLES = 100
 
-# Parâmetros da Estratégia Moderada
+# Parâmetros do Setup Campeão (Suporte/Resistência Dinâmico)
+LOOKBACK_SR = 15      # Janela para Máxima e Mínima recente
+ADX_PERIODO = 14
+ADX_MAX = 28.0        # Trava de consolidação (ADX < 28)
+
 RSI_PERIODO = 14
-RSI_COMPRA = 30
-RSI_VENDA = 70
+RSI_COMPRA = 35.0     # Sobrevenda em S&R
+RSI_VENDA = 65.0      # Sobrecompra em S&R
 
-EMA_PERIODO = 50
+MIN_PAVIO_RATIO = 0.08  # Pavio de Rejeição mínimo de 8% (0.08)
 
-MIN_PAVIO_RATIO = 0.15  # Rejeição mínima de 15% do tamanho total do candle
-
-COOLDOWN_VELAS = 2  # Intervalo de 2 velas após um sinal
+COOLDOWN_VELAS = 2    # Intervalo de 2 velas após um sinal
 
 # Quantidade de candles mantidos no stream em tempo real
 STREAM_MAXDICT = 20
@@ -120,7 +122,7 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-log = logging.getLogger("IQOPTION-BOT-V1.4")
+log = logging.getLogger("IQOPTION-BOT-V1.5")
 
 
 # ================================================================
@@ -135,8 +137,8 @@ class DummyHTTPHandler(BaseHTTPRequestHandler):
         self.send_header("Content-type", "text/html; charset=utf-8")
         self.end_headers()
         mensagem = (
-            "IQ Option Bot V1.4 "
-            "(Paper Trading / Estratégia Moderada M1) ONLINE"
+            "IQ Option Bot V1.5 "
+            "(Paper Trading / S&R Dinâmico + ADX + RSI) ONLINE"
         )
         self.wfile.write(mensagem.encode("utf-8"))
 
@@ -314,22 +316,8 @@ def telegram_enviar(mensagem):
 
 
 # ================================================================
-# CÁLCULOS TÉCNICOS (EMA E RSI)
+# CÁLCULOS TÉCNICOS (RSI E ADX)
 # ================================================================
-
-def calcular_ema(fechamentos, periodo):
-    """Calcula a Média Móvel Expansiva (EMA) de um período."""
-    if len(fechamentos) < periodo:
-        return None
-    
-    k = 2 / (periodo + 1)
-    ema = sum(fechamentos[:periodo]) / periodo
-    
-    for preco in fechamentos[periodo:]:
-        ema = (preco * k) + (ema * (1 - k))
-        
-    return ema
-
 
 def calcular_rsi(fechamentos, periodo=14):
     """Calcula o RSI de 14 períodos sobre uma lista de fechamentos."""
@@ -361,14 +349,70 @@ def calcular_rsi(fechamentos, periodo=14):
     return 100.0 - (100.0 / (1.0 + rs))
 
 
+def calcular_adx(historico, periodo=14):
+    """Calcula o ADX (Average Directional Index) de 14 períodos."""
+    if len(historico) < (periodo * 2):
+        return None
+
+    tr_list = []
+    plus_dm_list = []
+    minus_dm_list = []
+
+    for i in range(1, len(historico)):
+        h = historico[i]["high"]
+        l = historico[i]["low"]
+        prev_h = historico[i - 1]["high"]
+        prev_l = historico[i - 1]["low"]
+        prev_c = historico[i - 1]["close"]
+
+        tr = max(h - l, abs(h - prev_c), abs(l - prev_c))
+        up_move = h - prev_h
+        down_move = prev_l - l
+
+        plus_dm = up_move if (up_move > down_move and up_move > 0) else 0.0
+        minus_dm = down_move if (down_move > up_move and down_move > 0) else 0.0
+
+        tr_list.append(tr)
+        plus_dm_list.append(plus_dm)
+        minus_dm_list.append(minus_dm)
+
+    if len(tr_list) < (periodo * 2 - 1):
+        return None
+
+    # Smoothing inicial das listas
+    dx_list = []
+    for i in range(periodo, len(tr_list) + 1):
+        tr_sum = sum(tr_list[i - periodo:i])
+        if tr_sum == 0:
+            continue
+        
+        plus_di = 100 * (sum(plus_dm_list[i - periodo:i]) / tr_sum)
+        minus_di = 100 * (sum(minus_dm_list[i - periodo:i]) / tr_sum)
+
+        di_sum = plus_di + minus_di
+        if di_sum == 0:
+            dx = 0.0
+        else:
+            dx = 100 * (abs(plus_di - minus_di) / di_sum)
+        
+        dx_list.append(dx)
+
+    if len(dx_list) < periodo:
+        return None
+
+    adx = sum(dx_list[-periodo:]) / periodo
+    return adx
+
+
 # ================================================================
-# ESTRATÉGIA MODERADA (RSI + EMA 50 + PAVIO)
+# ESTRATÉGIA S&R DINÂMICO + ADX + RSI + PAVIO
 # ================================================================
 
 def gerar_sinal_estrategia(historico, timestamp_atual):
     global ultimo_sinal_timestamp
 
-    if len(historico) <= EMA_PERIODO:
+    # Necessário histórico suficiente para ADX (28+) e S&R
+    if len(historico) < (ADX_PERIODO * 2 + 5):
         return "NEUTRO", None
 
     # Checagem do Cooldown
@@ -378,10 +422,18 @@ def gerar_sinal_estrategia(historico, timestamp_atual):
     fechamentos = [c["close"] for c in historico]
     
     rsi = calcular_rsi(fechamentos, RSI_PERIODO)
-    ema_50 = calcular_ema(fechamentos, EMA_PERIODO)
+    adx = calcular_adx(historico, ADX_PERIODO)
 
-    if rsi is None or ema_50 is None:
+    if rsi is None or adx is None:
         return "NEUTRO", None
+
+    # Obter Máxima e Mínima recente (S&R Dinâmico dos últimos 15 candles exceto a atual)
+    candles_recientes = historico[-(LOOKBACK_SR + 1):-1]
+    if len(candles_recientes) < LOOKBACK_SR:
+        return "NEUTRO", None
+
+    max_recente = max(c["high"] for c in candles_recientes)
+    min_recente = min(c["low"] for c in candles_recientes)
 
     vela_atual = historico[-1]
     abertura = vela_atual["open"]
@@ -400,28 +452,28 @@ def gerar_sinal_estrategia(historico, timestamp_atual):
     ratio_pavio_inf = pavio_inferior / tamanho_total
 
     # GATILHO DE COMPRA:
-    # 1. Vela de Baixa (close < open)
-    # 2. RSI < 30 (Sobrevenda)
-    # 3. Tendência de Alta de curto prazo (close > EMA 50)
-    # 4. Rejeição com pavio inferior >= 15%
+    # 1. Tocou ou furou a Mínima dos últimos 15 candles (low <= min_recente)
+    # 2. RSI < 35 (Sobrevenda)
+    # 3. Mercado sem tendência forte (ADX < 28)
+    # 4. Rejeição com pavio inferior >= 8%
     if (
-        fechamento < abertura
+        minima <= min_recente
         and rsi < RSI_COMPRA
-        and fechamento > ema_50
+        and adx < ADX_MAX
         and ratio_pavio_inf >= MIN_PAVIO_RATIO
     ):
         ultimo_sinal_timestamp = timestamp_atual
         return "COMPRA", round(ratio_pavio_inf * 100, 2)
 
     # GATILHO DE VENDA:
-    # 1. Vela de Alta (close > open)
-    # 2. RSI > 70 (Sobrecompra)
-    # 3. Tendência de Baixa de curto prazo (close < EMA 50)
-    # 4. Rejeição com pavio superior >= 15%
+    # 1. Tocou ou furou a Máxima dos últimos 15 candles (high >= max_recente)
+    # 2. RSI > 65 (Sobrecompra)
+    # 3. Mercado sem tendência forte (ADX < 28)
+    # 4. Rejeição com pavio superior >= 8%
     if (
-        fechamento > abertura
+        maxima >= max_recente
         and rsi > RSI_VENDA
-        and fechamento < ema_50
+        and adx < ADX_MAX
         and ratio_pavio_sup >= MIN_PAVIO_RATIO
     ):
         ultimo_sinal_timestamp = timestamp_atual
@@ -600,7 +652,7 @@ def criar_sinal_simulado(aba, candle_sinal, candle_entrada, pavio_ratio, direcao
     linha = [
         datetime_sinal,
         PAR,
-        "RSI + EMA 50 + Pavio",
+        "S&R Dinâmico + ADX + RSI",
         f"{pavio_ratio}%",
         direcao,
         datetime_entrada,
@@ -625,7 +677,7 @@ def criar_sinal_simulado(aba, candle_sinal, candle_entrada, pavio_ratio, direcao
         log.info("=" * 60)
 
         telegram_enviar(
-            "🚨 NOVO SINAL M1 (Estratégia Moderada)\n\n"
+            "🚨 NOVO SINAL M1 (S&R Dinâmico + ADX + RSI)\n\n"
             f"Par: {PAR}\n"
             f"Direção: {direcao}\n"
             f"Entrada: {datetime_entrada}\n"
@@ -789,7 +841,7 @@ def atualizar_resumo(aba_resumo, sinais):
     resumo = calcular_resumo(sinais)
 
     linha = [
-        "RSI + EMA 50 + Pavio",
+        "S&R Dinâmico + ADX + RSI",
         resumo["total"],
         resumo["wins"],
         resumo["losses"],
@@ -839,9 +891,9 @@ def main():
     iniciar_stream(api)
 
     telegram_enviar(
-        "🤖 IQ OPTION BOT V1.4\n\n"
+        "🤖 IQ OPTION BOT V1.5\n\n"
         "Modo: PAPER TRADING\n"
-        "Estratégia: RSI(14) + EMA(50) + Pavio(15%)\n"
+        "Estratégia: S&R Dinâmico (15) + ADX(<28) + RSI + Pavio(8%)\n"
         f"Par: {PAR}\n"
         "Timeframe: M1\n"
         "Expiração: 1 minuto\n"
@@ -849,8 +901,8 @@ def main():
     )
 
     log.info("=" * 60)
-    log.info("IQ OPTION BOT V1.4 ONLINE")
-    log.info("ESTRATÉGIA: RSI(14) + EMA(50) + Pavio(15%)")
+    log.info("IQ OPTION BOT V1.5 ONLINE")
+    log.info("ESTRATÉGIA: S&R Dinâmico + ADX + RSI + Pavio")
     log.info(f"PAR: {PAR}")
     log.info("TIMEFRAME: M1")
     log.info("EXPIRAÇÃO: 1 MINUTO")
@@ -931,7 +983,7 @@ def main():
                     historico.sort(key=lambda x: x["timestamp"])
                     historico = historico[-HISTORICO_CANDLES:]
 
-                    # 4. GERAR NOVO SINAL COM ESTRATÉGIA MODERADA
+                    # 4. GERAR NOVO SINAL COM A NOVA ESTRATÉGIA
                     sinal, pavio_ratio = gerar_sinal_estrategia(
                         historico, timestamp_atual
                     )
