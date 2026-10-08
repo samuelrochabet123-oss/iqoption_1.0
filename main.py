@@ -221,8 +221,8 @@ PAR = os.getenv("PAR", "EURUSD").upper()
 TIMEFRAME = 60  # M1
 SR_PERIODO = 20
 
-# CONFIGURAÇÃO DE TESTE IMEDIATO
-TESTE_DISPARO_IMEDIATO = True  # True para forçar ordem na 1ª vela e testar a API
+# CONFIGURAÇÃO DE TESTE IMEDIATO (Mude para False após validar os testes)
+TESTE_DISPARO_IMEDIATO = True
 
 EXAUSTAO_FATOR_TAMANHO = 1.2
 MIN_PAVIO_RATIO = 0.20
