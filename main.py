@@ -68,9 +68,6 @@ COOLDOWN_VELAS = 3
 # Quantidade de candles mantidos no stream
 STREAM_MAXDICT = 20
 
-# Loop principal
-LOOP_SECONDS = 1
-
 # ================================================================
 # EXPIRAÇÃO DA OPERAÇÃO
 # ================================================================
@@ -221,8 +218,16 @@ HEADER_RESUMO = [
 
 
 # ================================================================
-# UTILITÁRIOS
+# UTILITÁRIOS E SINCRONIZAÇÃO DE TEMPO
 # ================================================================
+
+def smart_sleep_proximo_minuto():
+    """Garante que o script 'acorde' exatamente no segundo 00.050 do próximo minuto."""
+    agora = datetime.now()
+    segundos_espera = 60 - agora.second - (agora.microsecond / 1_000_000.0) + 0.050
+    if segundos_espera > 0:
+        time.sleep(segundos_espera)
+
 
 def para_float(valor):
 
@@ -501,19 +506,11 @@ def gerar_sinal_estrategia(
 
     global ultimo_sinal_timestamp
 
-    # ------------------------------------------------------------
-    # HISTÓRICO MÍNIMO
-    # ------------------------------------------------------------
-
     if len(historico) < (
         SR_PERIODO + 10
     ):
 
         return "NEUTRO", None
-
-    # ------------------------------------------------------------
-    # COOLDOWN
-    # ------------------------------------------------------------
 
     if (
         timestamp_atual
@@ -526,10 +523,6 @@ def gerar_sinal_estrategia(
     ):
 
         return "NEUTRO", None
-
-    # ------------------------------------------------------------
-    # SUPORTE / RESISTÊNCIA
-    # ------------------------------------------------------------
 
     suporte, resistencia = (
         calcular_suporte_resistencia(
@@ -544,10 +537,6 @@ def gerar_sinal_estrategia(
     ):
 
         return "NEUTRO", None
-
-    # ------------------------------------------------------------
-    # VELA ATUAL
-    # ------------------------------------------------------------
 
     vela_atual = historico[-1]
 
@@ -569,10 +558,6 @@ def gerar_sinal_estrategia(
 
         return "NEUTRO", None
 
-    # ------------------------------------------------------------
-    # MÉDIA DOS TAMANHOS
-    # ------------------------------------------------------------
-
     tamanhos_anteriores = [
         c["high"] - c["low"]
         for c in velas_anteriores
@@ -590,10 +575,6 @@ def gerar_sinal_estrategia(
 
         media_tamanho = 0.0001
 
-    # ------------------------------------------------------------
-    # EXAUSTÃO
-    # ------------------------------------------------------------
-
     eh_exaustao = (
         tamanho_total
         >=
@@ -603,10 +584,6 @@ def gerar_sinal_estrategia(
             EXAUSTAO_FATOR_TAMANHO
         )
     )
-
-    # ------------------------------------------------------------
-    # PAVIOS
-    # ------------------------------------------------------------
 
     pavio_superior = (
         maxima
@@ -638,15 +615,6 @@ def gerar_sinal_estrategia(
         tamanho_total
     )
 
-    # ============================================================
-    # VENDA
-    #
-    # Preço testa resistência
-    # Candle fecha de alta
-    # Existe exaustão
-    # Existe rejeição superior
-    # ============================================================
-
     if (
         eh_exaustao
         and maxima >= resistencia
@@ -666,15 +634,6 @@ def gerar_sinal_estrategia(
                 2
             )
         )
-
-    # ============================================================
-    # COMPRA
-    #
-    # Preço testa suporte
-    # Candle fecha de baixa
-    # Existe exaustão
-    # Existe rejeição inferior
-    # ============================================================
 
     if (
         eh_exaustao
@@ -743,12 +702,6 @@ def conectar_iq():
             f"{motivo}"
         )
 
-    # ------------------------------------------------------------
-    # IMPORTANTE:
-    # Apenas PRACTICE.
-    # Esta versão não envia operações reais.
-    # ------------------------------------------------------------
-
     api.change_balance(
         "PRACTICE"
     )
@@ -773,6 +726,32 @@ def iniciar_stream(api):
 
 
 def obter_stream_candles(api):
+
+    # COLETA DIRETA DE ALTA PRECISÃO NO SEGUNDO ZERO EXATO
+    try:
+
+        dados_historico = api.get_candles(
+            PAR,
+            TIMEFRAME,
+            3,
+            int(time.time())
+        )
+
+        if dados_historico and len(dados_historico) >= 2:
+
+            candles = [
+                normalizar_candle(c["from"], c)
+                for c in dados_historico
+                if "from" in c
+            ]
+
+            candles.sort(key=lambda x: x["timestamp"])
+
+            return candles
+
+    except Exception as e:
+
+        log.warning(f"Erro na coleta precisa via API: {e}")
 
     dados = api.get_realtime_candles(
         PAR,
@@ -1017,15 +996,6 @@ def carregar_sinais(
 
 # ================================================================
 # CRIAÇÃO DO SINAL
-#
-# A estratégia identifica uma oportunidade
-# na vela fechada.
-#
-# A entrada acontece no início da
-# próxima vela.
-#
-# A expiração ocorre no fechamento
-# dessa próxima vela.
 # ================================================================
 
 def criar_sinal_simulado(
@@ -1047,10 +1017,6 @@ def criar_sinal_simulado(
     ):
 
         return False
-
-    # ------------------------------------------------------------
-    # A entrada é no OPEN da próxima vela
-    # ------------------------------------------------------------
 
     preco_entrada = (
         candle_entrada["open"]
@@ -1190,12 +1156,6 @@ def determinar_resultado(
 
         return "EMPATE"
 
-    # ------------------------------------------------------------
-    # COMPRA
-    #
-    # Ganha se o preço subir.
-    # ------------------------------------------------------------
-
     if direcao == "COMPRA":
 
         if saida > entrada:
@@ -1203,12 +1163,6 @@ def determinar_resultado(
             return "WIN"
 
         return "LOSS"
-
-    # ------------------------------------------------------------
-    # VENDA
-    #
-    # Ganha se o preço cair.
-    # ------------------------------------------------------------
 
     if direcao == "VENDA":
 
@@ -1223,9 +1177,6 @@ def determinar_resultado(
 
 # ================================================================
 # ATUALIZAR RESULTADOS
-#
-# A operação somente é encerrada quando
-# a vela de expiração estiver fechada.
 # ================================================================
 
 def atualizar_resultados(
@@ -1261,10 +1212,6 @@ def atualizar_resultados(
 
         try:
 
-            # ----------------------------------------------------
-            # Timestamp da entrada
-            # ----------------------------------------------------
-
             dt_entrada = (
                 datetime
                 .strptime(
@@ -1282,19 +1229,10 @@ def atualizar_resultados(
                 dt_entrada.timestamp()
             )
 
-            # ----------------------------------------------------
-            # Expiração = entrada + 60 segundos
-            # ----------------------------------------------------
-
             ts_expiracao = (
                 ts_entrada
                 + EXPIRACAO_SEGUNDOS
             )
-
-            # ----------------------------------------------------
-            # Só fecha exatamente após
-            # o período de expiração.
-            # ----------------------------------------------------
 
             if (
                 ts_fechado
@@ -1326,16 +1264,6 @@ def atualizar_resultados(
                 if not linha:
 
                     continue
-
-                # ------------------------------------------------
-                # Atualiza:
-                #
-                # H = datetime expiração
-                # I = preço expiração
-                # J = resultado
-                # K = saldo W/L
-                # L = status
-                # ------------------------------------------------
 
                 saldo_wl = {
                     "WIN": 1,
@@ -1617,24 +1545,12 @@ def atualizar_resumo(
 
 def main():
 
-    # ------------------------------------------------------------
-    # SERVIDOR RENDER
-    # ------------------------------------------------------------
-
     threading.Thread(
         target=iniciar_servidor_http,
         daemon=True
     ).start()
 
-    # ------------------------------------------------------------
-    # CONFIGURAÇÃO
-    # ------------------------------------------------------------
-
     validar_configuracao()
-
-    # ------------------------------------------------------------
-    # GOOGLE
-    # ------------------------------------------------------------
 
     spreadsheet = (
         conectar_google()
@@ -1661,10 +1577,6 @@ def main():
         )
     )
 
-    # ------------------------------------------------------------
-    # CABEÇALHOS
-    # ------------------------------------------------------------
-
     garantir_cabecalho(
         aba_coletas,
         HEADER_COLETAS
@@ -1680,10 +1592,6 @@ def main():
         HEADER_RESUMO
     )
 
-    # ------------------------------------------------------------
-    # CARREGAR DADOS EXISTENTES
-    # ------------------------------------------------------------
-
     timestamps_coletas = (
         carregar_timestamps_coletas(
             aba_coletas
@@ -1696,10 +1604,6 @@ def main():
         )
     )
 
-    # ------------------------------------------------------------
-    # IQ OPTION
-    # ------------------------------------------------------------
-
     api = conectar_iq()
 
     historico = (
@@ -1711,10 +1615,6 @@ def main():
     iniciar_stream(
         api
     )
-
-    # ------------------------------------------------------------
-    # TELEGRAM
-    # ------------------------------------------------------------
 
     telegram_enviar(
         "🤖 IQ OPTION BOT V1.3\n\n"
@@ -1757,17 +1657,17 @@ def main():
     ultimo_timestamp_processado = None
 
     # ============================================================
-    # LOOP
+    # LOOP COM SINCRONIZAÇÃO EM TEMPO REAL
     # ============================================================
 
     while True:
 
         try:
 
-            # ----------------------------------------------------
-            # VERIFICAR CONEXÃO
-            # ----------------------------------------------------
+            # 1. ESPERA SINCRONIZADA MATEMATICAMENTE NA VIRADA DO SEGUNDO :00.050
+            smart_sleep_proximo_minuto()
 
+            # 2. CHECAGEM DE CONEXÃO
             if not api.check_connect():
 
                 log.warning(
@@ -1783,10 +1683,7 @@ def main():
 
                 continue
 
-            # ----------------------------------------------------
-            # CANDLES
-            # ----------------------------------------------------
-
+            # 3. OBTENÇÃO CIRÚRGICA DOS CANDLES
             candles_stream = (
                 obter_stream_candles(
                     api
@@ -1794,26 +1691,13 @@ def main():
             )
 
             if not candles_stream:
-
-                time.sleep(
-                    LOOP_SECONDS
-                )
-
                 continue
-
-            # ----------------------------------------------------
-            # ÚLTIMO TIMESTAMP
-            # ----------------------------------------------------
 
             timestamp_atual = (
                 candles_stream[-1][
                     "timestamp"
                 ]
             )
-
-            # ----------------------------------------------------
-            # PRIMEIRA EXECUÇÃO
-            # ----------------------------------------------------
 
             if (
                 ultimo_timestamp_processado
@@ -1830,16 +1714,9 @@ def main():
                     f"{candles_stream[-1]['datetime']}"
                 )
 
-                time.sleep(
-                    LOOP_SECONDS
-                )
-
                 continue
 
-            # ----------------------------------------------------
-            # NOVA VELA
-            # ----------------------------------------------------
-
+            # 4. EXECUÇÃO NA NOVA VELA
             if (
                 timestamp_atual
                 >
@@ -1854,10 +1731,6 @@ def main():
                     in candles_stream
                 }
 
-                # ------------------------------------------------
-                # A vela recém fechada
-                # ------------------------------------------------
-
                 ts_fechada = (
                     timestamp_atual
                     -
@@ -1870,13 +1743,6 @@ def main():
                     )
                 )
 
-                # ------------------------------------------------
-                # Vela que acabou de começar
-                #
-                # Esta é a entrada da
-                # operação do sinal anterior.
-                # ------------------------------------------------
-
                 vela_entrada = (
                     mapa.get(
                         timestamp_atual
@@ -1885,10 +1751,7 @@ def main():
 
                 if vela_fechada:
 
-                    # ============================================
                     # 1. REGISTRAR CANDLE
-                    # ============================================
-
                     if (
                         ts_fechada
                         not in
@@ -1918,10 +1781,7 @@ def main():
                                 f"C={vela_fechada['close']}"
                             )
 
-                    # ============================================
-                    # 2. FECHAR OPERAÇÕES QUE EXPIRARAM
-                    # ============================================
-
+                    # 2. FECHAR OPERAÇÕES EXPIRADAS
                     sinais = (
                         carregar_sinais(
                             aba_sinais
@@ -1960,10 +1820,7 @@ def main():
                             f"SALDO={resumo['saldo']}"
                         )
 
-                    # ============================================
                     # 3. ATUALIZAR HISTÓRICO
-                    # ============================================
-
                     historico = [
 
                         c
@@ -1993,10 +1850,7 @@ def main():
                         ]
                     )
 
-                    # ============================================
                     # 4. GERAR NOVO SINAL
-                    # ============================================
-
                     sinal, pavio_ratio = (
                         gerar_sinal_estrategia(
                             historico,
@@ -2004,15 +1858,7 @@ def main():
                         )
                     )
 
-                    # ============================================
                     # 5. CRIAR OPERAÇÃO SIMULADA
-                    #
-                    # O sinal é baseado na vela que acabou
-                    # de fechar.
-                    #
-                    # A entrada é na abertura da próxima vela.
-                    # ============================================
-
                     if (
                         sinal
                         in (
@@ -2049,21 +1895,9 @@ def main():
                             sinais
                         )
 
-                    # ============================================
-                    # ATUALIZAR TIMESTAMP
-                    # ============================================
-
                     ultimo_timestamp_processado = (
                         timestamp_atual
                     )
-
-            # ----------------------------------------------------
-            # LOOP
-            # ----------------------------------------------------
-
-            time.sleep(
-                LOOP_SECONDS
-            )
 
         except Exception as e:
 
@@ -2071,7 +1905,7 @@ def main():
                 f"Erro no loop principal: {e}"
             )
 
-            time.sleep(10)
+            time.sleep(5)
 
 
 # ================================================================
