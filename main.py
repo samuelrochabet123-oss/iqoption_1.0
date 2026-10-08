@@ -1,5 +1,5 @@
 # ================================================================
-# IQ OPTION BOT V1.4.2 (TESTE RÁPIDO DE ENTRADAS + DASHBOARD)
+# IQ OPTION BOT V1.4.3 (TESTE DE DISPARO IMEDIATO)
 # ================================================================
 
 import os
@@ -85,12 +85,12 @@ HTML_DASHBOARD = """<!DOCTYPE html>
         <div class="card timer-box">
             <div class="timer-title">Tempo Restante da Vela M1</div>
             <div class="timer-clock" id="clock">00s</div>
-            <p id="timer-hint" style="color: #64748b; font-size: 0.9em;">Execução automática habilitada na Conta Treino</p>
+            <p id="timer-hint" style="color: #64748b; font-size: 0.9em;">MODO DE TESTE IMEDIATO HABILITADO</p>
         </div>
 
         <div class="card">
             <div class="metric-label" style="margin-bottom: 10px;">ÚLTIMA ORDEM EXECUTADA:</div>
-            <div id="signal-card" class="signal-box signal-NEUTRO">AGUARDANDO OPORTUNIDADE</div>
+            <div id="signal-card" class="signal-box signal-NEUTRO">AGUARDANDO PRIMEIRA VELA</div>
             <div style="margin-top: 15px; font-size: 0.9em; text-align: center; color: #94a3b8;" id="signal-details">
                 Rejeição Pavio: -- | Entrada Prevista: --
             </div>
@@ -150,8 +150,8 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                         }
                     } else {
                         signalCard.className = "signal-box signal-NEUTRO";
-                        signalCard.innerText = "AGUARDANDO OPORTUNIDADE";
-                        document.getElementById('signal-details').innerText = "Aguardando confirmação de exaustão e rejeição";
+                        signalCard.innerText = "AGUARDANDO VELA M1";
+                        document.getElementById('signal-details').innerText = "Testando conexão de execução imediata";
                     }
                 })
                 .catch(err => console.error(err));
@@ -168,12 +168,12 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 
             if (restantes <= 5) {
                 clockEl.classList.add('timer-warning');
-                hintEl.innerText = "ENTRADA AUTOMÁTICA PRESTES A SER DISPARADA!";
+                hintEl.innerText = "ENTRADA DE TESTE PRESTES A DISPARAR!";
                 hintEl.style.color = "#ef4444";
                 hintEl.style.fontWeight = "bold";
             } else {
                 clockEl.classList.remove('timer-warning');
-                hintEl.innerText = "Execução automática habilitada na Conta Treino";
+                hintEl.innerText = "MODO DE TESTE IMEDIATO HABILITADO";
                 hintEl.style.color = "#64748b";
                 hintEl.style.fontWeight = "normal";
             }
@@ -221,9 +221,11 @@ PAR = os.getenv("PAR", "EURUSD").upper()
 TIMEFRAME = 60  # M1
 SR_PERIODO = 20
 
-# PARÂMETROS PARA TESTE RÁPIDO DE DISPAROS:
-EXAUSTAO_FATOR_TAMANHO = 1.2  # Exige vela apenas 20% maior que a média
-MIN_PAVIO_RATIO = 0.20        # Pavio de rejeição mínimo reduzido para 20%
+# CONFIGURAÇÃO DE TESTE IMEDIATO
+TESTE_DISPARO_IMEDIATO = True  # True para forçar ordem na 1ª vela e testar a API imediatamente
+
+EXAUSTAO_FATOR_TAMANHO = 1.2
+MIN_PAVIO_RATIO = 0.20
 
 COOLDOWN_VELAS = 2
 ultimo_sinal_timestamp = 0
@@ -252,7 +254,7 @@ LOOP_SECONDS = 1
 HISTORICO_CANDLES = 100
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-log = logging.getLogger("IQOPTION-BOT-V1.4.2")
+log = logging.getLogger("IQOPTION-BOT-V1.4.3")
 
 HEADER_SINAIS = ["datetime_sinal", "par", "estrategia", "pavio_ratio", "sinal", "datetime_entrada", "entrada", "datetime_resultado", "saida", "resultado", "saldo_wl", "status"]
 HEADER_RESUMO = ["estrategia", "total_sinais", "wins", "losses", "empates", "assertividade", "saldo_wl", "maior_loss", "atual_loss"]
@@ -377,6 +379,12 @@ def calcular_suporte_resistencia(historico, periodo=20):
 def gerar_sinal_estrategia(historico, timestamp_atual):
     global ultimo_sinal_timestamp
 
+    # Se a flag de teste imediato estiver ligada, força uma ordem na 1ª oportunidade
+    if TESTE_DISPARO_IMEDIATO and ultimo_sinal_timestamp == 0:
+        ultimo_sinal_timestamp = timestamp_atual
+        log.info("🧪 MODO TESTE IMEDIATO ATIVADO | FORÇANDO SINAL DE CALL PARA TESTAR EXECUÇÃO NA IQ OPTION")
+        return "CALL", 99.9
+
     if len(historico) < SR_PERIODO + 10:
         return "NEUTRO", None
 
@@ -490,7 +498,7 @@ def executar_ordem_iq(api, sinal):
     try:
         status, id_ordem = api.buy(VALOR_ENTRADA, PAR, direcao, 1)
         if status:
-            log.info(f"✅ ORDEM EXECUTADA COM SUCESSO! | ID: {id_ordem}")
+            log.info(f"✅ ORDEM EXECUTADA COM SUCESSO! | ID DA ORDEM: {id_ordem}")
             return True, id_ordem
         else:
             log.error(f"❌ REJEIÇÃO DA ORDEM PELA CORRETORA: {id_ordem}")
@@ -522,7 +530,7 @@ def criar_sinal_simulado(aba, api, candle_fechado, candle_entrada, pavio_ratio, 
     linha = [
         candle_fechado["datetime"],
         PAR,
-        "Price Action + Exaustao",
+        "TESTE IMEDIATO" if TESTE_DISPARO_IMEDIATO else "Price Action + Exaustao",
         f"{pavio_ratio}%",
         sinal,
         candle_entrada["datetime"],
@@ -530,7 +538,7 @@ def criar_sinal_simulado(aba, api, candle_fechado, candle_entrada, pavio_ratio, 
         "",
         "",
         "AGUARDANDO",
-        f"ID: {id_ordem}" if id_ordem else "",
+        f"ID: {id_ordem}" if id_ordem else "ERRO DISPARO",
         "ABERTO"
     ]
 
@@ -545,10 +553,10 @@ def criar_sinal_simulado(aba, api, candle_fechado, candle_entrada, pavio_ratio, 
         }
 
         telegram_enviar(
-            "🚀 ORDEM ENVIADA — CONTA TREINO\n\n"
+            "🚀 ORDEM DE TESTE DISPARADA — CONTA TREINO\n\n"
             f"Par: {PAR} | Operação: {sinal}\n"
             f"Valor: R$/$ {VALOR_ENTRADA}\n"
-            f"ID da Ordem: {id_ordem if id_ordem else 'Falha na execução'}\n"
+            f"ID da Ordem IQ Option: {id_ordem if id_ordem else 'Falha na execução'}\n"
             f"Entrada em: {candle_entrada['datetime']} (Preço: {candle_entrada['open']})"
         )
         return True
