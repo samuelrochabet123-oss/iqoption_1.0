@@ -126,8 +126,7 @@ log = logging.getLogger("IQOPTION-BOT-V1.5")
 
 
 # ================================================================
-# SERVIDOR HTTP
-# Render Health Check
+# SERVIDOR HTTP (Health Check + Gráfico de Velas TradingView)
 # ================================================================
 
 class DummyHTTPHandler(BaseHTTPRequestHandler):
@@ -136,11 +135,44 @@ class DummyHTTPHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/html; charset=utf-8")
         self.end_headers()
-        mensagem = (
-            "IQ Option Bot V1.5 "
-            "(Paper Trading / S&R Dinâmico + ADX + RSI) ONLINE"
-        )
-        self.wfile.write(mensagem.encode("utf-8"))
+        
+        html_grafico = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>IQ Option Bot - Gráfico M1 ({PAR})</title>
+            <style>
+                body, html {{ margin: 0; padding: 0; width: 100%; height: 100%; background-color: #131722; overflow: hidden; }}
+                .tradingview-widget-container {{ width: 100%; height: 100vh; }}
+            </style>
+        </head>
+        <body>
+            <div class="tradingview-widget-container">
+              <div id="tradingview_chart" style="width:100%;height:100%;"></div>
+              <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+              <script type="text/javascript">
+              new TradingView.widget({{
+                "autosize": true,
+                "symbol": "FX:{PAR}",
+                "interval": "1",
+                "timezone": "America/Sao_Paulo",
+                "theme": "dark",
+                "style": "1",
+                "locale": "br",
+                "toolbar_bg": "#f1f3f6",
+                "enable_publishing": false,
+                "hide_legend": false,
+                "save_image": false,
+                "container_id": "tradingview_chart"
+              }});
+              </script>
+            </div>
+        </body>
+        </html>
+        """
+        self.wfile.write(html_grafico.encode("utf-8"))
 
     def log_message(self, format, *args):
         return
@@ -149,7 +181,7 @@ class DummyHTTPHandler(BaseHTTPRequestHandler):
 def iniciar_servidor_http():
     porta = int(os.getenv("PORT", 8080))
     servidor = HTTPServer(("0.0.0.0", porta), DummyHTTPHandler)
-    log.info(f"Servidor HTTP ativo na porta {porta}")
+    log.info(f"Servidor HTTP ativo com Gráfico na porta {porta}")
     servidor.serve_forever()
 
 
@@ -379,7 +411,6 @@ def calcular_adx(historico, periodo=14):
     if len(tr_list) < (periodo * 2 - 1):
         return None
 
-    # Smoothing inicial das listas
     dx_list = []
     for i in range(periodo, len(tr_list) + 1):
         tr_sum = sum(tr_list[i - periodo:i])
@@ -411,11 +442,9 @@ def calcular_adx(historico, periodo=14):
 def gerar_sinal_estrategia(historico, timestamp_atual):
     global ultimo_sinal_timestamp
 
-    # Necessário histórico suficiente para ADX (28+) e S&R
     if len(historico) < (ADX_PERIODO * 2 + 5):
         return "NEUTRO", None
 
-    # Checagem do Cooldown
     if (timestamp_atual - ultimo_sinal_timestamp) < (COOLDOWN_VELAS * TIMEFRAME):
         return "NEUTRO", None
 
@@ -427,7 +456,6 @@ def gerar_sinal_estrategia(historico, timestamp_atual):
     if rsi is None or adx is None:
         return "NEUTRO", None
 
-    # Obter Máxima e Mínima recente (S&R Dinâmico dos últimos 15 candles exceto a atual)
     candles_recientes = historico[-(LOOKBACK_SR + 1):-1]
     if len(candles_recientes) < LOOKBACK_SR:
         return "NEUTRO", None
@@ -451,11 +479,6 @@ def gerar_sinal_estrategia(historico, timestamp_atual):
     ratio_pavio_sup = pavio_superior / tamanho_total
     ratio_pavio_inf = pavio_inferior / tamanho_total
 
-    # GATILHO DE COMPRA:
-    # 1. Tocou ou furou a Mínima dos últimos 15 candles (low <= min_recente)
-    # 2. RSI < 35 (Sobrevenda)
-    # 3. Mercado sem tendência forte (ADX < 28)
-    # 4. Rejeição com pavio inferior >= 8%
     if (
         minima <= min_recente
         and rsi < RSI_COMPRA
@@ -465,11 +488,6 @@ def gerar_sinal_estrategia(historico, timestamp_atual):
         ultimo_sinal_timestamp = timestamp_atual
         return "COMPRA", round(ratio_pavio_inf * 100, 2)
 
-    # GATILHO DE VENDA:
-    # 1. Tocou ou furou a Máxima dos últimos 15 candles (high >= max_recente)
-    # 2. RSI > 65 (Sobrecompra)
-    # 3. Mercado sem tendência forte (ADX < 28)
-    # 4. Rejeição com pavio superior >= 8%
     if (
         maxima >= max_recente
         and rsi > RSI_VENDA
