@@ -1,5 +1,6 @@
 # ================================================================
-# IQ OPTION BOT V1.4.5 (PRODUÇÃO ESTÁVEL & SEM TRAVAMENTOS)
+# IQ OPTION BOT V1.2 (PRICE ACTION + EXAUSTÃO + S/R + COOLDOWN)
+# COM SERVIDOR HTTP PARA RENDER WEB SERVICE
 # ================================================================
 
 import os
@@ -20,186 +21,15 @@ from iqoptionapi.stable_api import IQ_Option
 
 
 # ================================================================
-# ESTADO GLOBAL DO BOT (COMPARTILHADO COM O HTTP)
+# SERVIDOR HTTP (HEALTH CHECK RENDER)
 # ================================================================
 
-estado_bot = {
-    "par": os.getenv("PAR", "EURUSD").upper(),
-    "status_stream": "Aguardando...",
-    "vela_atual": None,
-    "ultimo_sinal": None,
-    "suporte": None,
-    "resistencia": None,
-    "pavio_atual": 0.0,
-    "resumo_placar": {"wins": 0, "losses": 0, "assertividade": 0.0}
-}
-
-
-# ================================================================
-# DASHBOARD HTTP & API ENDPOINTS
-# ================================================================
-
-HTML_DASHBOARD = """<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IQ Option Bot - Live Dashboard & Auto Trader</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        body { background-color: #0f172a; color: #f8fafc; display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 20px; }
-        .container { width: 100%; max-width: 800px; display: grid; gap: 20px; }
-        .card { background: #1e293b; border-radius: 12px; padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); border: 1px solid #334155; }
-        .header { display: flex; justify-content: space-between; align-items: center; }
-        .badge { background: #22c55e; padding: 4px 12px; border-radius: 20px; font-weight: bold; font-size: 0.9em; color: #0f172a; }
-        
-        /* TIMING / RELÓGIO */
-        .timer-box { text-align: center; padding: 30px; background: #090d16; border-radius: 12px; border: 2px solid #334155; }
-        .timer-title { font-size: 1em; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
-        .timer-clock { font-size: 4em; font-weight: 800; font-family: monospace; color: #38bdf8; margin: 10px 0; }
-        .timer-warning { color: #ef4444 !important; animation: pulse 0.8s infinite alternate; }
-
-        /* SINAL DE ENTRADA */
-        .signal-box { text-align: center; padding: 25px; border-radius: 12px; font-weight: bold; font-size: 1.8em; transition: all 0.3s ease; }
-        .signal-NEUTRO { background: #1e293b; color: #64748b; border: 1px dashed #475569; }
-        .signal-CALL { background: #15803d; color: #ffffff; border: 2px solid #22c55e; animation: flash 1s infinite alternate; }
-        .signal-PUT { background: #b91c1c; color: #ffffff; border: 2px solid #ef4444; animation: flash 1s infinite alternate; }
-
-        /* VELAS & METRICAS */
-        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
-        .metric { display: flex; flex-direction: column; gap: 5px; }
-        .metric-label { color: #94a3b8; font-size: 0.85em; }
-        .metric-value { font-size: 1.2em; font-weight: 600; font-family: monospace; }
-
-        @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.05); } }
-        @keyframes flash { from { opacity: 1; } to { opacity: 0.8; } }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="card header">
-            <h2>IQ OPTION AUTO-BOT <span id="par-ativo" style="color: #38bdf8;">--</span></h2>
-            <span class="badge" id="status-bot">AUTO TRADER ATIVO</span>
-        </div>
-
-        <div class="card timer-box">
-            <div class="timer-title">Tempo Restante da Vela M1</div>
-            <div class="timer-clock" id="clock">00s</div>
-            <p id="timer-hint" style="color: #64748b; font-size: 0.9em;">Execução automática habilitada na Conta Treino</p>
-        </div>
-
-        <div class="card">
-            <div class="metric-label" style="margin-bottom: 10px;">ÚLTIMA ORDEM EXECUTADA:</div>
-            <div id="signal-card" class="signal-box signal-NEUTRO">AGUARDANDO OPORTUNIDADE</div>
-            <div style="margin-top: 15px; font-size: 0.9em; text-align: center; color: #94a3b8;" id="signal-details">
-                Rejeição Pavio: -- | Entrada Prevista: --
-            </div>
-        </div>
-
-        <div class="card grid-2">
-            <div class="metric">
-                <span class="metric-label">Preço Atual:</span>
-                <span class="metric-value" id="preco-atual">0.00000</span>
-            </div>
-            <div class="metric">
-                <span class="metric-label">Rejeição Pavio (Atual):</span>
-                <span class="metric-value" id="pavio-atual" style="color: #f59e0b;">0%</span>
-            </div>
-            <div class="metric">
-                <span class="metric-label">Resistência (Topo):</span>
-                <span class="metric-value" id="resistencia" style="color: #ef4444;">0.00000</span>
-            </div>
-            <div class="metric">
-                <span class="metric-label">Suporte (Fundo):</span>
-                <span class="metric-value" id="suporte" style="color: #22c55e;">0.00000</span>
-            </div>
-        </div>
-    </div>
-
-    <audio id="audio-alert" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg" preload="auto"></audio>
-
-    <script>
-        let ultimoSinalNotificado = "";
-
-        function atualizarDashboard() {
-            fetch('/api/status')
-                .then(res => res.json())
-                .then(data => {
-                    document.getElementById('par-ativo').innerText = data.par;
-                    document.getElementById('status-bot').innerText = "AUTO DEMO: " + data.status_stream;
-                    
-                    if (data.vela_atual) {
-                        document.getElementById('preco-atual').innerText = data.vela_atual.close.toFixed(5);
-                    }
-                    
-                    document.getElementById('pavio-atual').innerText = data.pavio_atual + '%';
-                    document.getElementById('resistencia').innerText = data.resistencia ? data.resistencia.toFixed(5) : '--';
-                    document.getElementById('suporte').innerText = data.suporte ? data.suporte.toFixed(5) : '--';
-
-                    const signalCard = document.getElementById('signal-card');
-                    if (data.ultimo_sinal && data.ultimo_sinal.sinal !== "NEUTRO") {
-                        const s = data.ultimo_sinal;
-                        signalCard.className = `signal-box signal-${s.sinal}`;
-                        signalCard.innerText = `ORDEM ENVIADA: ${s.sinal}`;
-                        document.getElementById('signal-details').innerText = 
-                            `Pavio: ${s.pavio_ratio}% | Executada em: ${s.datetime_entrada}`;
-
-                        if (ultimoSinalNotificado !== s.datetime_sinal) {
-                            ultimoSinalNotificado = s.datetime_sinal;
-                            document.getElementById('audio-alert').play().catch(()=>{});
-                        }
-                    } else {
-                        signalCard.className = "signal-box signal-NEUTRO";
-                        signalCard.innerText = "AGUARDANDO OPORTUNIDADE";
-                        document.getElementById('signal-details').innerText = "Aguardando confirmação de exaustão e rejeição";
-                    }
-                })
-                .catch(err => console.error(err));
-        }
-
-        function atualizarRelogio() {
-            const agora = new Date();
-            const segundos = agora.getSeconds();
-            const restantes = 60 - segundos;
-            const clockEl = document.getElementById('clock');
-            const hintEl = document.getElementById('timer-hint');
-
-            clockEl.innerText = (restantes < 10 ? "0" : "") + restantes + "s";
-
-            if (restantes <= 5) {
-                clockEl.classList.add('timer-warning');
-                hintEl.innerText = "ENTRADA AUTOMÁTICA PRESTES A DISPARAR!";
-                hintEl.style.color = "#ef4444";
-                hintEl.style.fontWeight = "bold";
-            } else {
-                clockEl.classList.remove('timer-warning');
-                hintEl.innerText = "Execução automática habilitada na Conta Treino";
-                hintEl.style.color = "#64748b";
-                hintEl.style.fontWeight = "normal";
-            }
-        }
-
-        setInterval(atualizarDashboard, 1000);
-        setInterval(atualizarRelogio, 1000);
-        atualizarRelogio();
-    </script>
-</body>
-</html>
-"""
-
-
-class DashboardHTTPHandler(BaseHTTPRequestHandler):
+class DummyHTTPHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == "/api/status":
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(estado_bot).encode("utf-8"))
-        else:
-            self.send_response(200)
-            self.send_header("Content-type", "text/html; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(HTML_DASHBOARD.encode("utf-8"))
+        self.send_response(200)
+        self.send_header("Content-type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"Bot IQ Option (Modo Sinal / Simulador) esta rodando com sucesso!")
 
     def log_message(self, format, *args):
         return
@@ -207,8 +37,8 @@ class DashboardHTTPHandler(BaseHTTPRequestHandler):
 
 def iniciar_servidor_http():
     porta = int(os.getenv("PORT", 8080))
-    servidor = HTTPServer(("0.0.0.0", porta), DashboardHTTPHandler)
-    log.info(f"Dashboard HTTP rodando na porta {porta} (Render / Web).")
+    servidor = HTTPServer(("0.0.0.0", porta), DummyHTTPHandler)
+    log.info(f"Servidor HTTP ativo na porta {porta} (Render Health Check OK).")
     servidor.serve_forever()
 
 
@@ -219,23 +49,21 @@ def iniciar_servidor_http():
 PAR = os.getenv("PAR", "EURUSD").upper()
 
 TIMEFRAME = 60  # M1
+
 SR_PERIODO = 20
 
-# DESATIVADO MODO DE TESTE IMEDIATO PARA PRODUÇÃO
-TESTE_DISPARO_IMEDIATO = False
+EXAUSTAO_FATOR_TAMANHO = 1.5  # Quantas vezes a vela precisa ser maior que a média recente
+MIN_PAVIO_RATIO = 0.35        # Pavio de rejeição mínimo (35% do tamanho total)
 
-EXAUSTAO_FATOR_TAMANHO = 1.2
-MIN_PAVIO_RATIO = 0.20
-
-COOLDOWN_VELAS = 2
+COOLDOWN_VELAS = 3
 ultimo_sinal_timestamp = 0
 
 STREAM_MAXDICT = 20
 
-MODO_AUTO = True
-VALOR_ENTRADA = float(os.getenv("VALOR_ENTRADA", 10.0))
-
-GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "1uuw_jS5-e4dUQ28DCffknMaMnJfUbekHLkTFp0aqGtA")
+GOOGLE_SHEET_ID = os.getenv(
+    "GOOGLE_SHEET_ID",
+    "1uuw_jS5-e4dUQ28DCffknMaMnJfUbekHLkTFp0aqGtA"
+)
 
 ABA_COLETAS = "IQOption_Coletas"
 ABA_SINAIS = "Sinais_Bot"
@@ -253,12 +81,54 @@ TZ_LOCAL = ZoneInfo("America/Sao_Paulo")
 LOOP_SECONDS = 1
 HISTORICO_CANDLES = 100
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-log = logging.getLogger("IQOPTION-BOT-V1.4.5")
 
-HEADER_SINAIS = ["datetime_sinal", "par", "estrategia", "pavio_ratio", "sinal", "datetime_entrada", "entrada", "datetime_resultado", "saida", "resultado", "saldo_wl", "status"]
-HEADER_RESUMO = ["estrategia", "total_sinais", "wins", "losses", "empates", "assertividade", "saldo_wl", "maior_loss", "atual_loss"]
+# ================================================================
+# LOG
+# ================================================================
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
+
+log = logging.getLogger("IQOPTION-BOT-V1.2")
+
+
+# ================================================================
+# CABEÇALHOS
+# ================================================================
+
+HEADER_SINAIS = [
+    "datetime_sinal",
+    "par",
+    "estrategia",
+    "pavio_ratio",
+    "sinal",
+    "datetime_entrada",
+    "entrada",
+    "datetime_resultado",
+    "saida",
+    "resultado",
+    "saldo_wl",
+    "status"
+]
+
+HEADER_RESUMO = [
+    "estrategia",
+    "total_sinais",
+    "wins",
+    "losses",
+    "empates",
+    "assertividade",
+    "saldo_wl",
+    "maior_loss",
+    "atual_loss"
+]
+
+
+# ================================================================
+# UTILITÁRIOS
+# ================================================================
 
 def para_float(valor):
     if valor is None or valor == "":
@@ -269,7 +139,10 @@ def para_float(valor):
 
 
 def timestamp_para_local(timestamp):
-    return datetime.fromtimestamp(int(timestamp), tz=timezone.utc).astimezone(TZ_LOCAL)
+    return datetime.fromtimestamp(
+        int(timestamp),
+        tz=timezone.utc
+    ).astimezone(TZ_LOCAL)
 
 
 def formatar_datetime(timestamp):
@@ -289,24 +162,43 @@ def normalizar_candle(timestamp, candle):
 
 
 def validar_configuracao():
-    obrigatorias = {"IQ_EMAIL": IQ_EMAIL, "IQ_PASSWORD": IQ_PASSWORD, "GOOGLE_CREDENTIALS_JSON": GOOGLE_CREDENTIALS_JSON, "TELEGRAM_BOT_TOKEN": TELEGRAM_BOT_TOKEN, "TELEGRAM_CHAT_ID": TELEGRAM_CHAT_ID}
+    obrigatorias = {
+        "IQ_EMAIL": IQ_EMAIL,
+        "IQ_PASSWORD": IQ_PASSWORD,
+        "GOOGLE_CREDENTIALS_JSON": GOOGLE_CREDENTIALS_JSON,
+        "TELEGRAM_BOT_TOKEN": TELEGRAM_BOT_TOKEN,
+        "TELEGRAM_CHAT_ID": TELEGRAM_CHAT_ID
+    }
+
     faltando = [nome for nome, valor in obrigatorias.items() if not valor]
+
     if faltando:
         raise RuntimeError("Variáveis de ambiente ausentes: " + ", ".join(faltando))
 
 
+# ================================================================
+# GOOGLE SHEETS
+# ================================================================
+
 def conectar_google():
+    log.info("Conectando ao Google Sheets...")
     info = json.loads(GOOGLE_CREDENTIALS_JSON)
-    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
     credentials = Credentials.from_service_account_info(info, scopes=scopes)
     client = gspread.authorize(credentials)
-    return client.open_by_key(GOOGLE_SHEET_ID)
+    spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
+    log.info(f"Planilha conectada: {spreadsheet.title}")
+    return spreadsheet
 
 
 def obter_aba(spreadsheet, nome):
     try:
         return spreadsheet.worksheet(nome)
     except gspread.WorksheetNotFound:
+        log.info(f"Criando aba '{nome}'...")
         return spreadsheet.add_worksheet(title=nome, rows=5000, cols=20)
 
 
@@ -314,60 +206,32 @@ def garantir_cabecalho(aba, cabecalho):
     try:
         if not aba.row_values(1):
             aba.update(range_name="A1", values=[cabecalho])
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"Não foi possível verificar cabeçalho da aba {aba.title}: {e}")
 
+
+# ================================================================
+# TELEGRAM
+# ================================================================
 
 def telegram_enviar(mensagem):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return False
+
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": mensagem}
+
     try:
-        requests.post(url, json=payload, timeout=15)
-        return True
-    except Exception:
+        resposta = requests.post(url, json=payload, timeout=15)
+        return resposta.status_code == 200
+    except Exception as e:
+        log.warning(f"Erro enviando Telegram: {e}")
         return False
 
 
-def carregar_timestamps_coletas(aba):
-    try:
-        valores = aba.col_values(1)
-    except Exception as e:
-        log.warning(f"Erro lendo coluna de candles: {e}")
-        return set()
-
-    timestamps = set()
-    for valor in valores:
-        if not valor or valor.lower() == "datetime":
-            continue
-        try:
-            dt = datetime.strptime(valor.strip(), "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ_LOCAL)
-            timestamps.add(int(dt.timestamp()))
-        except Exception:
-            continue
-
-    return timestamps
-
-
-def registrar_candle(aba, candle):
-    linha = [
-        candle["datetime"],
-        PAR,
-        candle["open"],
-        candle["high"],
-        candle["low"],
-        candle["close"] if candle["close"] is not None else "",
-        candle["volume"]
-    ]
-
-    try:
-        aba.append_row(linha, value_input_option="USER_ENTERED")
-        return True
-    except Exception as e:
-        log.warning(f"Erro registrando candle na planilha: {e}")
-        return False
-
+# ================================================================
+# ESTRATÉGIA: PRICE ACTION + EXAUSTÃO
+# ================================================================
 
 def calcular_suporte_resistencia(historico, periodo=20):
     if len(historico) < periodo:
@@ -379,22 +243,13 @@ def calcular_suporte_resistencia(historico, periodo=20):
 def gerar_sinal_estrategia(historico, timestamp_atual):
     global ultimo_sinal_timestamp
 
-    if TESTE_DISPARO_IMEDIATO and ultimo_sinal_timestamp == 0:
-        ultimo_sinal_timestamp = timestamp_atual
-        log.info("🧪 MODO TESTE IMEDIATO ATIVADO | FORÇANDO SINAL DE CALL PARA TESTAR EXECUÇÃO NA IQ OPTION")
-        return "CALL", 99.9
-
     if len(historico) < SR_PERIODO + 10:
         return "NEUTRO", None
-
-    suporte, resistencia = calcular_suporte_resistencia(historico[:-1], SR_PERIODO)
-    
-    estado_bot["suporte"] = suporte
-    estado_bot["resistencia"] = resistencia
 
     if (timestamp_atual - ultimo_sinal_timestamp) < (COOLDOWN_VELAS * TIMEFRAME):
         return "NEUTRO", None
 
+    suporte, resistencia = calcular_suporte_resistencia(historico[:-1], SR_PERIODO)
     if suporte is None or resistencia is None:
         return "NEUTRO", None
 
@@ -419,9 +274,6 @@ def gerar_sinal_estrategia(historico, timestamp_atual):
     ratio_pavio_sup = pavio_superior / tamanho_total
     ratio_pavio_inf = pavio_inferior / tamanho_total
 
-    pavio_perc = round(max(ratio_pavio_sup, ratio_pavio_inf) * 100, 2)
-    estado_bot["pavio_atual"] = pavio_perc
-
     if eh_exaustao and maxima >= resistencia and fechamento > abertura and ratio_pavio_sup >= MIN_PAVIO_RATIO:
         ultimo_sinal_timestamp = timestamp_atual
         return "PUT", round(ratio_pavio_sup * 100, 2)
@@ -430,31 +282,28 @@ def gerar_sinal_estrategia(historico, timestamp_atual):
         ultimo_sinal_timestamp = timestamp_atual
         return "CALL", round(ratio_pavio_inf * 100, 2)
 
-    return "NEUTRO", pavio_perc
+    return "NEUTRO", round(max(ratio_pavio_sup, ratio_pavio_inf) * 100, 2)
 
+
+# ================================================================
+# IQ OPTION
+# ================================================================
 
 def conectar_iq():
+    log.info(f"Conectando IQ Option | PAR={PAR}")
     api = IQ_Option(IQ_EMAIL, IQ_PASSWORD)
     try:
         api.set_max_reconnect(-1)
     except Exception:
         pass
+
     conectado, motivo = api.connect()
     if not conectado:
         raise RuntimeError(f"Falha na conexão IQ Option: {motivo}")
+
     api.change_balance("PRACTICE")
-    log.info("IQ Option conectada | CONTA: PRACTICE (DEMONSTRAÇÃO)")
+    log.info("IQ Option conectada | Modo de Leitura/Análise")
     return api
-
-
-def reinstanciar_e_reconectar_iq():
-    while True:
-        try:
-            api = conectar_iq()
-            iniciar_stream(api)
-            return api
-        except Exception:
-            time.sleep(15)
 
 
 def iniciar_stream(api):
@@ -466,6 +315,7 @@ def obter_stream_candles(api):
     dados = api.get_realtime_candles(PAR, TIMEFRAME)
     if not dados:
         return []
+
     candles = []
     for timestamp, candle in dados.items():
         try:
@@ -473,6 +323,7 @@ def obter_stream_candles(api):
                 candles.append(normalizar_candle(timestamp, candle))
         except Exception:
             pass
+
     candles.sort(key=lambda x: x["timestamp"])
     return candles
 
@@ -483,48 +334,47 @@ def obter_historico_inicial(api):
         candles = [normalizar_candle(c["from"], c) for c in dados if "from" in c]
         candles.sort(key=lambda x: x["timestamp"])
         return candles
-    except Exception:
+    except Exception as e:
+        log.warning(f"Erro obtendo histórico: {e}")
         return []
 
 
-def executar_ordem_iq(api, sinal):
-    """Executa a ordem com proteção de timeout para não travar o loop no Render."""
-    if not MODO_AUTO:
-        return False, None
+# ================================================================
+# GOOGLE SHEETS - REGISTROS
+# ================================================================
 
-    direcao = "call" if str(sinal).upper() == "CALL" else "put"
-    log.info(f"⚡ ENVIANDO ORDEM PARA A IQ OPTION | Direção: {direcao.upper()} | Valor: {VALOR_ENTRADA}")
-
-    # 1. TENTATIVA BINÁRIA TRADICIONAL
+def carregar_timestamps_coletas(aba):
     try:
-        status, id_ordem = api.buy(VALOR_ENTRADA, PAR, direcao, 1)
-        if status and str(id_ordem).lower() != "error":
-            log.info(f"✅ ORDEM BINÁRIA EXECUTADA COM SUCESSO! | ID: {id_ordem}")
-            return True, id_ordem
-    except Exception as e:
-        log.warning(f"Falha na tentativa binária: {e}")
+        valores = aba.col_values(1)
+        timestamps = set()
+        for valor in valores[1:]:
+            if not valor or valor.lower() == "datetime":
+                continue
+            try:
+                dt = datetime.strptime(valor.strip(), "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ_LOCAL)
+                timestamps.add(int(dt.timestamp()))
+            except Exception:
+                continue
+        return timestamps
+    except Exception:
+        return set()
 
-    # 2. FALLBACK OPÇÕES DIGITAIS (COM TIMEOUT CONTROLADO)
-    log.warning("Tentando disparo via fallback de Opções Digitais...")
+
+def registrar_candle(aba, candle):
+    linha = [
+        candle["datetime"],
+        PAR,
+        candle["open"],
+        candle["high"],
+        candle["low"],
+        candle["close"] if candle["close"] is not None else "",
+        candle["volume"]
+    ]
     try:
-        status, id_ordem = api.buy_digital_spot(PAR, VALOR_ENTRADA, direcao, 1)
-        
-        inicio = time.time()
-        while str(id_ordem).lower() == "pending" or not id_ordem:
-            time.sleep(0.2)
-            if time.time() - inicio > 3.0:  # Timeout máximo de 3 segundos
-                break
-
-        if status and str(id_ordem).lower() not in ("error", "pending", "none"):
-            log.info(f"✅ ORDEM DIGITAL EXECUTADA COM SUCESSO! | ID: {id_ordem}")
-            return True, id_ordem
-        else:
-            log.error(f"❌ REJEIÇÃO DA ORDEM DIGITAL PELA CORRETORA: {id_ordem}")
-            return False, str(id_ordem)
-
-    except Exception as e:
-        log.error(f"❌ ERRO AO EXECUTAR ORDEM DIGITAL: {e}")
-        return False, str(e)
+        aba.append_row(linha, value_input_option="USER_ENTERED")
+        return True
+    except Exception:
+        return False
 
 
 def carregar_sinais(aba):
@@ -533,23 +383,29 @@ def carregar_sinais(aba):
         sinais = {}
         for numero_linha, row in enumerate(valores[1:], start=2):
             if len(row) >= 12:
-                sinais[row[0]] = {"linha": numero_linha, "datetime_sinal": row[0], "sinal": row[4], "datetime_entrada": row[5], "entrada": row[6], "status": row[11], "pavio_ratio": row[3]}
+                sinais[row[0]] = {
+                    "linha": numero_linha,
+                    "datetime_sinal": row[0],
+                    "sinal": row[4],
+                    "datetime_entrada": row[5],
+                    "entrada": row[6],
+                    "status": row[11],
+                    "pavio_ratio": row[3]
+                }
         return sinais
     except Exception:
         return {}
 
 
-def criar_sinal_simulado(aba, api, candle_fechado, candle_entrada, pavio_ratio, sinal, sinais_existentes):
+def criar_sinal_simulado(aba, candle_fechado, candle_entrada, pavio_ratio, sinal, sinais_existentes):
     datetime_sinal = candle_fechado["datetime"]
     if datetime_sinal in sinais_existentes:
         return False
 
-    sucesso_ordem, id_ordem = executar_ordem_iq(api, sinal)
-
     linha = [
         candle_fechado["datetime"],
         PAR,
-        "TESTE IMEDIATO" if TESTE_DISPARO_IMEDIATO else "Price Action + Exaustao",
+        "Price Action + Exaustao",
         f"{pavio_ratio}%",
         sinal,
         candle_entrada["datetime"],
@@ -557,29 +413,26 @@ def criar_sinal_simulado(aba, api, candle_fechado, candle_entrada, pavio_ratio, 
         "",
         "",
         "AGUARDANDO",
-        f"ID: {id_ordem}" if id_ordem else "ERRO DISPARO",
+        "",
         "ABERTO"
     ]
 
     try:
         aba.append_row(linha, value_input_option="USER_ENTERED")
-        
-        estado_bot["ultimo_sinal"] = {
-            "sinal": sinal,
-            "pavio_ratio": pavio_ratio,
-            "datetime_sinal": candle_fechado["datetime"],
-            "datetime_entrada": candle_entrada["datetime"]
-        }
+        log.info("=" * 50)
+        log.info(f"🚨 SINAL GERADO | {sinal} | Pavio Rejeição: {pavio_ratio}%")
+        log.info("=" * 50)
 
         telegram_enviar(
-            "🚀 ORDEM DISPARADA — CONTA TREINO\n\n"
-            f"Par: {PAR} | Operação: {sinal}\n"
-            f"Valor: R$/$ {VALOR_ENTRADA}\n"
-            f"ID da Ordem IQ Option: {id_ordem if id_ordem else 'Falha na execução'}\n"
-            f"Entrada em: {candle_entrada['datetime']} (Preço: {candle_entrada['open']})"
+            "🚨 NOVO SINAL DETECTADO\n\n"
+            f"Par: {PAR} | Direção: {sinal}\n"
+            f"Rejeição Pavio: {pavio_ratio}%\n"
+            f"Entrada Recomendada: {candle_entrada['datetime']}\n"
+            f"Preço Atual: {candle_entrada['open']}"
         )
         return True
-    except Exception:
+    except Exception as e:
+        log.warning(f"Erro criando sinal na planilha: {e}")
         return False
 
 
@@ -638,21 +491,13 @@ def atualizar_resultados(aba_sinais, sinais, candle_fechado):
                     value_input_option="USER_ENTERED"
                 )
 
-                sinal["datetime_resultado"] = candle_fechado["datetime"]
-                sinal["saida"] = saida
-                sinal["resultado"] = resultado
                 sinal["status"] = "FECHADO"
-
                 alterados += 1
                 emoji = {"WIN": "✅", "LOSS": "❌", "EMPATE": "⚪"}[resultado]
 
-                log.info("=" * 50)
-                log.info(f"{emoji} RESULTADO CONFIRMADO | {sinal['sinal']} | Entrada: {entrada} | Saída: {saida} | Resultado: {resultado}")
-                log.info("=" * 50)
-
                 telegram_enviar(
-                    f"{emoji} RESULTADO — CONTA TREINO\n\n"
-                    f"Par: {PAR} | Operação: {sinal['sinal']}\n"
+                    f"{emoji} RESULTADO DO SINAL\n\n"
+                    f"Par: {PAR} | Direção: {sinal['sinal']}\n"
                     f"Entrada: {entrada} | Saída: {saida}\n"
                     f"Resultado: {resultado}"
                 )
@@ -664,40 +509,27 @@ def atualizar_resultados(aba_sinais, sinais, candle_fechado):
 
 
 def calcular_resumo(sinais):
-    wins = 0
-    losses = 0
-    empates = 0
-    atual_loss = 0
-    maior_loss = 0
+    wins, losses, empates = 0, 0, 0
+    atual_loss, maior_loss = 0, 0
 
-    ordenados = sorted(sinais.values(), key=lambda x: x["datetime_sinal"])
-
-    for sinal in ordenados:
-        resultado = str(sinal.get("resultado", "")).upper()
-        if resultado == "WIN":
+    for sinal in sorted(sinais.values(), key=lambda x: x["datetime_sinal"]):
+        res = str(sinal.get("resultado", "")).upper()
+        if res == "WIN":
             wins += 1
             atual_loss = 0
-        elif resultado == "LOSS":
+        elif res == "LOSS":
             losses += 1
             atual_loss += 1
             maior_loss = max(maior_loss, atual_loss)
-        elif resultado == "EMPATE":
+        elif res == "EMPATE":
             empates += 1
-            atual_loss = 0
 
     total = wins + losses + empates
     assertividade = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0.0
-    saldo = wins - losses
-
     return {
-        "total": total,
-        "wins": wins,
-        "losses": losses,
-        "empates": empates,
-        "assertividade": assertividade,
-        "saldo": saldo,
-        "maior_loss": maior_loss,
-        "atual_loss": atual_loss
+        "total": total, "wins": wins, "losses": losses, "empates": empates,
+        "assertividade": assertividade, "saldo": wins - losses,
+        "maior_loss": maior_loss, "atual_loss": atual_loss
     }
 
 
@@ -705,27 +537,22 @@ def atualizar_resumo(aba_resumo, sinais):
     resumo = calcular_resumo(sinais)
     linha = [
         "Price Action + Exaustao",
-        resumo["total"],
-        resumo["wins"],
-        resumo["losses"],
-        resumo["empates"],
-        round(resumo["assertividade"], 2),
-        resumo["saldo"],
-        resumo["maior_loss"],
-        resumo["atual_loss"]
+        resumo["total"], resumo["wins"], resumo["losses"], resumo["empates"],
+        round(resumo["assertividade"], 2), resumo["saldo"],
+        resumo["maior_loss"], resumo["atual_loss"]
     ]
 
     try:
-        aba_resumo.update(
-            range_name="A1:I2",
-            values=[HEADER_RESUMO, linha],
-            value_input_option="USER_ENTERED"
-        )
+        aba_resumo.update(range_name="A1:I2", values=[HEADER_RESUMO, linha], value_input_option="USER_ENTERED")
     except Exception as e:
         log.warning(f"Erro atualizando resumo: {e}")
 
     return resumo
 
+
+# ================================================================
+# MAIN
+# ================================================================
 
 def main():
     threading.Thread(target=iniciar_servidor_http, daemon=True).start()
@@ -742,26 +569,19 @@ def main():
     timestamps_coletas = carregar_timestamps_coletas(aba_coletas)
     sinais = carregar_sinais(aba_sinais)
 
-    log.info(f"Candles já gravados na planilha: {len(timestamps_coletas)}")
-    log.info(f"Sinais já salvos na planilha: {len(sinais)}")
-
-    api = None
-    while True:
-        try:
-            api = conectar_iq()
-            break
-        except Exception:
-            time.sleep(15)
-
+    api = conectar_iq()
     historico = obter_historico_inicial(api)
     iniciar_stream(api)
+
+    telegram_enviar("🤖 IQ OPTION BOT V1.2 (SINAIS M1 ONLINE)")
 
     ultimo_timestamp_processado = None
 
     while True:
         try:
             if not api.check_connect():
-                api = reinstanciar_e_reconectar_iq()
+                api = conectar_iq()
+                iniciar_stream(api)
                 continue
 
             candles_stream = obter_stream_candles(api)
@@ -769,20 +589,13 @@ def main():
                 time.sleep(LOOP_SECONDS)
                 continue
 
-            vela_em_andamento = candles_stream[-1]
-            estado_bot["vela_atual"] = vela_em_andamento
-            estado_bot["status_stream"] = "ONLINE (AUTO-TRADER)"
-
-            timestamp_atual = vela_em_andamento["timestamp"]
+            timestamp_atual = candles_stream[-1]["timestamp"]
 
             if ultimo_timestamp_processado is None:
                 ultimo_timestamp_processado = timestamp_atual
                 time.sleep(LOOP_SECONDS)
                 continue
 
-            # ====================================================
-            # VIRADA DE VELA (M1 ENCERROU)
-            # ====================================================
             if timestamp_atual > ultimo_timestamp_processado:
                 mapa = {c["timestamp"]: c for c in candles_stream}
                 ts_fechada = timestamp_atual - TIMEFRAME
@@ -791,31 +604,27 @@ def main():
                 vela_entrada = mapa.get(timestamp_atual)
 
                 if vela_fechada:
-                    # 1. SALVA A VELA NA ABA 'IQOption_Coletas'
                     if ts_fechada not in timestamps_coletas:
                         sucesso = registrar_candle(aba_coletas, vela_fechada)
                         if sucesso:
                             timestamps_coletas.add(ts_fechada)
                             log.info(f"📊 CANDLE REGISTRADO | {vela_fechada['datetime']} | O={vela_fechada['open']} | C={vela_fechada['close']}")
 
-                    # 2. ATUALIZA RESULTADOS DE SINAIS ABERTOS NA PLANILHA
                     sinais = carregar_sinais(aba_sinais)
                     resultados = atualizar_resultados(aba_sinais, sinais, vela_fechada)
                     if resultados > 0:
                         sinais = carregar_sinais(aba_sinais)
                         atualizar_resumo(aba_resumo, sinais)
 
-                    # 3. ATUALIZA HISTÓRICO DE ANÁLISE
                     historico = [c for c in historico if c["timestamp"] != vela_fechada["timestamp"]]
                     historico.append(vela_fechada)
                     historico.sort(key=lambda x: x["timestamp"])
                     historico = historico[-HISTORICO_CANDLES:]
 
-                    # 4. GERA SINAL E DISPARA OPERAÇÃO AUTOMÁTICA
                     sinal, pavio_ratio = gerar_sinal_estrategia(historico, timestamp_atual)
 
                     if sinal in ("CALL", "PUT") and vela_entrada:
-                        criar_sinal_simulado(aba_sinais, api, vela_fechada, vela_entrada, pavio_ratio, sinal, sinais)
+                        criar_sinal_simulado(aba_sinais, vela_fechada, vela_entrada, pavio_ratio, sinal, sinais)
                         sinais = carregar_sinais(aba_sinais)
                         atualizar_resumo(aba_resumo, sinais)
 
@@ -824,7 +633,7 @@ def main():
             time.sleep(LOOP_SECONDS)
 
         except Exception as e:
-            log.exception(f"Erro loop principal: {e}")
+            log.exception(f"Erro no loop principal: {e}")
             time.sleep(10)
 
 
