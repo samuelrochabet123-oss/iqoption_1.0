@@ -1,5 +1,5 @@
 # ================================================================
-# IQ OPTION BOT V1.4.4 (TESTE DE DISPARO COM CORREÇÃO DE PAYLOAD)
+# IQ OPTION BOT V1.4.5 (PRODUÇÃO ESTÁVEL & SEM TRAVAMENTOS)
 # ================================================================
 
 import os
@@ -85,12 +85,12 @@ HTML_DASHBOARD = """<!DOCTYPE html>
         <div class="card timer-box">
             <div class="timer-title">Tempo Restante da Vela M1</div>
             <div class="timer-clock" id="clock">00s</div>
-            <p id="timer-hint" style="color: #64748b; font-size: 0.9em;">MODO DE TESTE IMEDIATO HABILITADO</p>
+            <p id="timer-hint" style="color: #64748b; font-size: 0.9em;">Execução automática habilitada na Conta Treino</p>
         </div>
 
         <div class="card">
             <div class="metric-label" style="margin-bottom: 10px;">ÚLTIMA ORDEM EXECUTADA:</div>
-            <div id="signal-card" class="signal-box signal-NEUTRO">AGUARDANDO PRIMEIRA VELA</div>
+            <div id="signal-card" class="signal-box signal-NEUTRO">AGUARDANDO OPORTUNIDADE</div>
             <div style="margin-top: 15px; font-size: 0.9em; text-align: center; color: #94a3b8;" id="signal-details">
                 Rejeição Pavio: -- | Entrada Prevista: --
             </div>
@@ -150,8 +150,8 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                         }
                     } else {
                         signalCard.className = "signal-box signal-NEUTRO";
-                        signalCard.innerText = "AGUARDANDO VELA M1";
-                        document.getElementById('signal-details').innerText = "Testando conexão de execução imediata";
+                        signalCard.innerText = "AGUARDANDO OPORTUNIDADE";
+                        document.getElementById('signal-details').innerText = "Aguardando confirmação de exaustão e rejeição";
                     }
                 })
                 .catch(err => console.error(err));
@@ -168,12 +168,12 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 
             if (restantes <= 5) {
                 clockEl.classList.add('timer-warning');
-                hintEl.innerText = "ENTRADA DE TESTE PRESTES A DISPARAR!";
+                hintEl.innerText = "ENTRADA AUTOMÁTICA PRESTES A DISPARAR!";
                 hintEl.style.color = "#ef4444";
                 hintEl.style.fontWeight = "bold";
             } else {
                 clockEl.classList.remove('timer-warning');
-                hintEl.innerText = "MODO DE TESTE IMEDIATO HABILITADO";
+                hintEl.innerText = "Execução automática habilitada na Conta Treino";
                 hintEl.style.color = "#64748b";
                 hintEl.style.fontWeight = "normal";
             }
@@ -221,8 +221,8 @@ PAR = os.getenv("PAR", "EURUSD").upper()
 TIMEFRAME = 60  # M1
 SR_PERIODO = 20
 
-# CONFIGURAÇÃO DE TESTE IMEDIATO (Mude para False após validar os testes)
-TESTE_DISPARO_IMEDIATO = True
+# DESATIVADO MODO DE TESTE IMEDIATO PARA PRODUÇÃO
+TESTE_DISPARO_IMEDIATO = False
 
 EXAUSTAO_FATOR_TAMANHO = 1.2
 MIN_PAVIO_RATIO = 0.20
@@ -254,7 +254,7 @@ LOOP_SECONDS = 1
 HISTORICO_CANDLES = 100
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-log = logging.getLogger("IQOPTION-BOT-V1.4.4")
+log = logging.getLogger("IQOPTION-BOT-V1.4.5")
 
 HEADER_SINAIS = ["datetime_sinal", "par", "estrategia", "pavio_ratio", "sinal", "datetime_entrada", "entrada", "datetime_resultado", "saida", "resultado", "saldo_wl", "status"]
 HEADER_RESUMO = ["estrategia", "total_sinais", "wins", "losses", "empates", "assertividade", "saldo_wl", "maior_loss", "atual_loss"]
@@ -488,32 +488,42 @@ def obter_historico_inicial(api):
 
 
 def executar_ordem_iq(api, sinal):
-    """Executa a ordem utilizando os padrões aceitos pelas novas versões da API."""
+    """Executa a ordem com proteção de timeout para não travar o loop no Render."""
     if not MODO_AUTO:
         return False, None
 
-    # Ajuste do payload: a API espera "call" ou "put" em caixa baixa
     direcao = "call" if str(sinal).upper() == "CALL" else "put"
     log.info(f"⚡ ENVIANDO ORDEM PARA A IQ OPTION | Direção: {direcao.upper()} | Valor: {VALOR_ENTRADA}")
 
+    # 1. TENTATIVA BINÁRIA TRADICIONAL
     try:
-        # Tenta a compra de opção binária padrão
         status, id_ordem = api.buy(VALOR_ENTRADA, PAR, direcao, 1)
-        
-        # Se a opção binária retornar erro/recusa, tenta o disparo via opções digitais
-        if not status or str(id_ordem).lower() == "error" or "error" in str(id_ordem).lower():
-            log.warning("Tentando disparo via fallback de opções digitais...")
-            status, id_ordem = api.buy_digital_spot(PAR, VALOR_ENTRADA, direcao, 1)
-
         if status and str(id_ordem).lower() != "error":
-            log.info(f"✅ ORDEM EXECUTADA COM SUCESSO! | ID DA ORDEM: {id_ordem}")
+            log.info(f"✅ ORDEM BINÁRIA EXECUTADA COM SUCESSO! | ID: {id_ordem}")
+            return True, id_ordem
+    except Exception as e:
+        log.warning(f"Falha na tentativa binária: {e}")
+
+    # 2. FALLBACK OPÇÕES DIGITAIS (COM TIMEOUT CONTROLADO)
+    log.warning("Tentando disparo via fallback de Opções Digitais...")
+    try:
+        status, id_ordem = api.buy_digital_spot(PAR, VALOR_ENTRADA, direcao, 1)
+        
+        inicio = time.time()
+        while str(id_ordem).lower() == "pending" or not id_ordem:
+            time.sleep(0.2)
+            if time.time() - inicio > 3.0:  # Timeout máximo de 3 segundos
+                break
+
+        if status and str(id_ordem).lower() not in ("error", "pending", "none"):
+            log.info(f"✅ ORDEM DIGITAL EXECUTADA COM SUCESSO! | ID: {id_ordem}")
             return True, id_ordem
         else:
-            log.error(f"❌ REJEIÇÃO DA ORDEM PELA CORRETORA: {id_ordem}")
+            log.error(f"❌ REJEIÇÃO DA ORDEM DIGITAL PELA CORRETORA: {id_ordem}")
             return False, str(id_ordem)
 
     except Exception as e:
-        log.exception(f"Erro ao disparar ordem via API: {e}")
+        log.error(f"❌ ERRO AO EXECUTAR ORDEM DIGITAL: {e}")
         return False, str(e)
 
 
@@ -562,7 +572,7 @@ def criar_sinal_simulado(aba, api, candle_fechado, candle_entrada, pavio_ratio, 
         }
 
         telegram_enviar(
-            "🚀 ORDEM DE TESTE DISPARADA — CONTA TREINO\n\n"
+            "🚀 ORDEM DISPARADA — CONTA TREINO\n\n"
             f"Par: {PAR} | Operação: {sinal}\n"
             f"Valor: R$/$ {VALOR_ENTRADA}\n"
             f"ID da Ordem IQ Option: {id_ordem if id_ordem else 'Falha na execução'}\n"
