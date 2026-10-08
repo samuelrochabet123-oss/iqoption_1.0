@@ -1,5 +1,5 @@
 # ================================================================
-# IQ OPTION BOT V1.4.1 (AUTO-TRADER + COLETA SHEETS + DASHBOARD)
+# IQ OPTION BOT V1.4.2 (TESTE RÁPIDO DE ENTRADAS + DASHBOARD)
 # ================================================================
 
 import os
@@ -221,15 +221,15 @@ PAR = os.getenv("PAR", "EURUSD").upper()
 TIMEFRAME = 60  # M1
 SR_PERIODO = 20
 
-EXAUSTAO_FATOR_TAMANHO = 1.5
-MIN_PAVIO_RATIO = 0.35
+# PARÂMETROS PARA TESTE RÁPIDO DE DISPAROS:
+EXAUSTAO_FATOR_TAMANHO = 1.2  # Exige vela apenas 20% maior que a média
+MIN_PAVIO_RATIO = 0.20        # Pavio de rejeição mínimo reduzido para 20%
 
-COOLDOWN_VELAS = 3
+COOLDOWN_VELAS = 2
 ultimo_sinal_timestamp = 0
 
 STREAM_MAXDICT = 20
 
-# CONFIGURAÇÃO DE AUTOMAÇÃO DE ENTRADAS
 MODO_AUTO = True
 VALOR_ENTRADA = float(os.getenv("VALOR_ENTRADA", 10.0))
 
@@ -252,7 +252,7 @@ LOOP_SECONDS = 1
 HISTORICO_CANDLES = 100
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-log = logging.getLogger("IQOPTION-BOT-V1.4.1")
+log = logging.getLogger("IQOPTION-BOT-V1.4.2")
 
 HEADER_SINAIS = ["datetime_sinal", "par", "estrategia", "pavio_ratio", "sinal", "datetime_entrada", "entrada", "datetime_resultado", "saida", "resultado", "saldo_wl", "status"]
 HEADER_RESUMO = ["estrategia", "total_sinais", "wins", "losses", "empates", "assertividade", "saldo_wl", "maior_loss", "atual_loss"]
