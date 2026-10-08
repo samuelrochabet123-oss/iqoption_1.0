@@ -126,7 +126,7 @@ log = logging.getLogger("IQOPTION-BOT-V1.5")
 
 
 # ================================================================
-# SERVIDOR HTTP (Health Check + Gráfico de Velas TradingView)
+# SERVIDOR HTTP (Health Check + Gráfico Estável TradingView)
 # ================================================================
 
 class DummyHTTPHandler(BaseHTTPRequestHandler):
@@ -136,42 +136,36 @@ class DummyHTTPHandler(BaseHTTPRequestHandler):
         self.send_header("Content-type", "text/html; charset=utf-8")
         self.end_headers()
         
-        html_grafico = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>IQ Option Bot - Gráfico M1 ({PAR})</title>
-            <style>
-                body, html {{ margin: 0; padding: 0; width: 100%; height: 100%; background-color: #131722; overflow: hidden; }}
-                .tradingview-widget-container {{ width: 100%; height: 100vh; }}
-            </style>
-        </head>
-        <body>
-            <div class="tradingview-widget-container">
-              <div id="tradingview_chart" style="width:100%;height:100%;"></div>
-              <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-              <script type="text/javascript">
-              new TradingView.widget({{
-                "autosize": true,
-                "symbol": "FX:{PAR}",
-                "interval": "1",
-                "timezone": "America/Sao_Paulo",
-                "theme": "dark",
-                "style": "1",
-                "locale": "br",
-                "toolbar_bg": "#f1f3f6",
-                "enable_publishing": false,
-                "hide_legend": false,
-                "save_image": false,
-                "container_id": "tradingview_chart"
-              }});
-              </script>
-            </div>
-        </body>
-        </html>
-        """
+        # Garante o formato limpo do par (ex: FX:EURUSD ou OANDA:EURUSD)
+        par_limpo = PAR.replace("/", "").strip().upper()
+        
+        html_grafico = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IQ Option Bot - Gráfico M1 ({par_limpo})</title>
+    <style>
+        html, body {{
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #131722;
+            overflow: hidden;
+        }}
+        iframe {{
+            width: 100%;
+            height: 100%;
+            border: none;
+        }}
+    </style>
+</head>
+<body>
+    <iframe src="https://s.tradingview.com/widgetembed/?symbol=FX%3A{par_limpo}&interval=1&hidesidetoolbar=0&symboledit=1&saveimage=1&toolbarbg=f1f3f6&studies=%5B%5D&theme=dark&style=1&timezone=America%2FSao_Paulo"></iframe>
+</body>
+</html>
+"""
         self.wfile.write(html_grafico.encode("utf-8"))
 
     def log_message(self, format, *args):
